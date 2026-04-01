@@ -7,7 +7,7 @@ Composable Agent Skills for spec-driven development designed to be extended with
 ---
 
 What goes in or what stays out of your coding agents context window is the biggest lever you have as a developer when agentic coding.
-Context Specs focuses on solving this problem.  Providing the right context and the right time.  All while, using your organization's expertise.
+Context Specs focuses on solving this problem.  Providing the right context at the right time.  All while, using your organization's expertise.
 
 
 ## How It Works
@@ -319,4 +319,4 @@ Two levels of evaluation will measure and improve the SDLC:
 
 ## License
 
-MIT
+Apache 2.0
