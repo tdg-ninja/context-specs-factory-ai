@@ -115,22 +115,15 @@ Validates a mainspec and its slices using parallel subagent consensus, then expe
 
 ### Implement Slice (`/implement-slice`)
 
-Transforms a slice spec into a phased implementation plan, then implements it.
+Implements a single slice with Signal validation and unit tests. Follows a focused three-step workflow:
 
-**Temporal phase ordering**: Adapts to the feature, but follows a natural layering:
-1. **Types/Contracts** — Interfaces, schemas, data structures
-2. **Domain Logic** — Core business logic and validation
-3. **Persistence** — Database operations, queries, data access
-4. **API Layer** — HTTP handlers, endpoints, request/response mapping
-5. **UI Components** — Frontend components that consume the API
+1. **Implement** — Read the slice file, then implement all code specified in the slice
+2. **Signal Validation** — Check the slice's Signal section. If a signal skill is specified, invoke it and iterate until the expected behavior is validated. If "None", skip to tests
+3. **Unit Tests** — Create or update unit tests for the implemented functionality
 
-**Interactive**: Asks questions to clarify intent and validate assumptions before implementing. Presents the full phased plan for user approval.
+**TODO tracking**: Creates a three-item TODO list per slice (`Implement`, `Signal Validation`, `Unit Tests`) and marks each in progress/complete as work proceeds.
 
-**Cross-cutting concerns**: Every plan addresses observability (structured logs that prove behavior), idempotency and retry-safety, error handling patterns, and security considerations.
-
-**Testing strategy**: Categorized test names (unit, integration) with specific test file paths — proves coverage without writing tests upfront.
-
-**Signal processing**: After implementing code, checks the slice's Signal section. If a signal skill is specified, invokes it, follows guidance, and iterates until signal validates success.
+**Signal processing**: Each slice includes a Signal section naming a signal skill and expected behaviors. After implementing code, the agent invokes the signal, follows guidance, and iterates until success.
 
 ### Implement Mainspec (`/implement-mainspec`)
 
@@ -312,7 +305,7 @@ Two levels of evaluation will measure and improve the SDLC:
 - [Spec Planning Skill](./.claude/skills/specs/spec-planning/SKILL.md) — Full context engineering practices for spec creation
 - [Spec Validate Skill](./.claude/skills/specs/spec-validate/SKILL.md) — Multi-agent consensus validation details
 - [Expert SDD Creator Skill](./.claude/skills/specs/expert-sdd-creator/SKILL.md) — How experts are generated and registered
-- [Implement Slice Skill](./.claude/skills/dev/implement-slice/SKILL.md) — Phased implementation planning
+- [Implement Slice Skill](./.claude/skills/dev/implement-slice/SKILL.md) — Single slice implementation with signal validation
 - [Implement Mainspec Skill](./.claude/skills/dev/implement-mainspec/SKILL.md) — Orchestration, tiers, and parallel execution
 
 ---
