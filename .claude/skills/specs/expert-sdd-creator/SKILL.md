@@ -1,6 +1,6 @@
 ---
 name: expert-sdd-creator
-description: Meta skill for creating new SDD experts from domain documentation. Provide a markdown file path with domain knowledge + optional steering context. Automatically synthesizes references, generates signal scripts, validates, and registers in experts.md/signals.md catalogs. Single-prompt creation with follow-up tweaks. Triggers: create expert, new expert, make expert, expert for, domain expert, add expert (project)
+description: Meta skill for creating new SDD experts from domain documentation. Provide a markdown file path with domain knowledge + optional steering context. Automatically synthesizes references, generates signal scripts, validates, and registers in experts.md/signals.md catalogs. Single-prompt creation with follow-up tweaks. Triggers - create expert, new expert, make expert, expert for, domain expert, add expert (project)
 ---
 
 # Expert SDD Creator
