@@ -26,6 +26,8 @@ All file paths in the slice spec are relative to this directory.
 2. **No PRs** — Do NOT create pull requests.
 3. **No worktree commands** — Do NOT run `git worktree` commands. You are already in a worktree (or the correct branch).
 4. **Stay in scope** — Only modify files specified by or implied by your assigned slice. Do not modify files outside your slice scope.
+5. **No human prompts** — Do NOT use `AskUserQuestion`. No human is in the loop.
+6. **Honor `max_signal_iterations`** — If the prompt provides this value (default 3), pass it to `implement-slice` so the inner signal-fix-retry loop is bounded. Return FAILURE if the cap is hit; do not loop indefinitely.
 
 ## Workflow
 

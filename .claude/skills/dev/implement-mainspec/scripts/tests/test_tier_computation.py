@@ -82,7 +82,7 @@ class TestSvgChartsTiers:
         assert result["max_parallel"] == 4
 
     def test_feature_branch(self, result):
-        assert result["feature_branch"] == "feat/svg-and-charts"
+        assert result["feature_branch"] == "feature/svg-and-charts"
 
     def test_slice_files_resolved(self, result):
         for tier in result["tiers"]:
@@ -228,10 +228,10 @@ class TestNoDependencies:
 
 class TestFeatureBranchNaming:
     def test_basic(self):
-        assert feature_branch_name("svg-and-charts") == "feat/svg-and-charts"
+        assert feature_branch_name("svg-and-charts") == "feature/svg-and-charts"
 
     def test_with_hyphens(self):
-        assert feature_branch_name("implement-mainspec-parallel") == "feat/implement-mainspec-parallel"
+        assert feature_branch_name("implement-mainspec-parallel") == "feature/implement-mainspec-parallel"
 
 
 class TestSliceBranchNaming:

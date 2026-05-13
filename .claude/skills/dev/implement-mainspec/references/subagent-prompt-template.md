@@ -15,12 +15,20 @@ Read the slice file at:
   <absolute-spec-file-path>
   (This is an absolute path — it may be outside your working directory)
 
+Configuration:
+  max_signal_iterations: 3
+  (Cap on the inner signal-fix-retry loop in implement-slice. If signal validation
+  has not passed after 3 fix attempts, return FAILURE with reason: signal_failure
+  and the last signal output. Do not loop indefinitely.)
+
 Follow the implement-slice workflow (preloaded in your context) to implement the slice.
 
 Report your result:
   - SUCCESS: all code implemented, tests pass. List key files created/modified.
-  - FAILURE: describe what went wrong and where you stopped
+  - FAILURE: describe what went wrong and where you stopped. If signal-related,
+    include reason: signal_failure and the last signal output.
 
+Do NOT use AskUserQuestion — no human is in the loop.
 Do NOT run any git commands (add, commit, push) — the orchestrator handles git.
 Do NOT create a PR — the orchestrator handles PR creation.
 Do NOT modify files outside your assigned slice scope.

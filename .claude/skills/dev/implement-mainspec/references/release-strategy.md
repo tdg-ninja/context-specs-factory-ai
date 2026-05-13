@@ -1,6 +1,6 @@
 # Release Strategy (Parallel Mode)
 
-The feature branch IS the release candidate. PR `feat/<mainspec-name>` to `main` directly. No separate release branches.
+The feature branch IS the release candidate. PR `feature/<feature>` to `main` directly. No separate release branches.
 
 ## When to Release
 
@@ -16,7 +16,7 @@ For partial release: leave unwanted slice PRs unmerged on feat, then PR feat to 
 ## How to Release
 
 ```bash
-gh pr create --base main --head feat/<mainspec-name> \
+gh pr create --base main --head feature/<feature> \
   --title "Release: <mainspec-name>" \
   --body "Includes slices: <list merged slice numbers>"
 ```
@@ -33,11 +33,11 @@ Git/GitHub handles the diff correctly — it knows what was already merged.
 ### If Merging main into feat for Conflict Resolution
 
 ```bash
-git checkout feat/<mainspec-name>
+git checkout feature/<feature>
 git merge main
 # Resolve any conflicts
 # Run tests to verify nothing broke
-git push origin feat/<mainspec-name>
+git push origin feature/<feature>
 # Then create the release PR
 ```
 

@@ -1,21 +1,54 @@
 ---
 name: spec-planning
-description: Used to create a spec plan. Creates a temporal ordered plan of mainspecs and slices with clear dependencies, objectives, and user stories. Researches the codebase to ground specs in reality, asks clarifying questions to understand user intent, and writes spec outlines that paint a clear picture of WHAT needs to be built and WHY. Each slice includes a Signal section to indicate how to validate the implementation.
+description: Reads a PRD (`prds/<feature>/prd.md`) plus its failing test and `run-prd-test.sh`, grounds them in codebase research, and produces `specs/<feature>/mainspec.md` plus dependency-ordered slices. Encodes the PRD test as a slice success criterion so implementation completion implies PRD test green. Touches `specs/<feature>/.planning-done` as its final committed action. Agent-first — no human-in-the-loop.
 ---
 
 # Spec Planning
 
-Turn user ideas into structured Spec Plans using Spec-Driven Development.
+Turn a PRD into a structured Spec Plan using Spec-Driven Development. Agent-first: this skill is invoked headless by the harness dispatcher, with the feature slug as its single argument. It reads disk, does the work, commits artifacts plus a sentinel, and exits.
+
+## Invocation Contract
+
+**Invoked by the dispatcher as:** `claude -p "/spec-planning <feature>" --cwd <worktree>`
+
+**Single argument:** `<feature>` — kebab-case feature slug. All paths derive from this.
+
+**Inputs read from disk (paths relative to cwd):**
+- `prds/<feature>/prd.md` — the why, user story, definition of done, constraints, out-of-scope.
+- `prds/<feature>/run-prd-test.sh` — executable test runner for this feature's PRD test. Exits 0 when the feature is done.
+- The failing test referenced by the PRD (path discoverable from `run-prd-test.sh`, or scan-found in the project's test directory marked `skip` / `xfail` with `reason="PRD pending: <feature>"`).
+- The current codebase.
+
+**Outputs to disk (paths relative to cwd):**
+- `specs/<feature>/mainspec.md`
+- `specs/<feature>/slices/*.md`
+- `specs/<feature>/.planning-done` (empty sentinel)
+
+**Completion protocol (in order):**
+1. Write all mainspec + slice files.
+2. `git add` those files, commit with a clear message, push.
+3. `touch specs/<feature>/.planning-done`.
+4. `git add` the sentinel, commit, push.
+
+The sentinel is the **final** commit-and-push action, only after every other artifact is in place. The dispatcher uses only the sentinel to advance to spec-validate.
+
+**Idempotency:**
+- If `specs/<feature>/.planning-done` already exists, exit immediately (the previous invocation completed; the dispatcher's worktree wipe will have discarded any uncommitted intermediate state).
+- If `specs/<feature>/mainspec.md` exists but the sentinel does not, treat as crash recovery: verify the existing artifacts are complete and self-consistent, fix any gaps, then write the sentinel.
+
+**Ambiguous PRD handling:**
+- If the PRD is too ambiguous to ground (contradictions, undefined terms, missing definition of done), write `prds/<feature>/clarifications-needed.md` documenting the open questions, commit it, and exit without writing the sentinel. The dispatcher will re-fire on the next tick; if the PRD has been amended, planning may now succeed.
 
 ## Spec-Driven Development & Your Role
 
-Spec planning starts with the end in mind. You create a mainspec that defines the complete end state of a feature, then work backwards to identify logical slices—temporal chunks of intent that each focus on a clear WHAT and WHY. Each slice is a manageable piece that can be implemented independently while building toward the complete vision. Your job: research the codebase to understand what exists today, ask clarifying questions to understand user intent, create temporal ordering of mainspecs and slices based on dependencies, and write spec outlines that paint a clear picture of WHAT needs to be built and WHY it matters. Start each slice with clear objectives and user stories to establish context and purpose. The balance: provide clear intent, constraints, and patterns from the actual codebase, but avoid being overly prescriptive about implementation details. Your output is a mainspec plus ordered slices with dependencies explicitly documented, giving implementation agents the right context to succeed.
+Spec planning starts with the end in mind. You create a mainspec that defines the complete end state of a feature, then work backwards to identify logical slices—temporal chunks of intent that each focus on a clear WHAT and WHY. Each slice is a manageable piece that can be implemented independently while building toward the complete vision. Your job: read the PRD as the source of intent, research the codebase to understand what exists today, create temporal ordering of mainspecs and slices based on dependencies, and write spec outlines that paint a clear picture of WHAT needs to be built and WHY it matters. Start each slice with clear objectives and user stories to establish context and purpose. The balance: provide clear intent, constraints, and patterns from the actual codebase, but avoid being overly prescriptive about implementation details. Your output is a mainspec plus ordered slices with dependencies explicitly documented, giving implementation agents the right context to succeed.
 
 ## Guidelines
 
+- **Ground entirely in the PRD and codebase** — Operate from `prds/<feature>/prd.md` and the codebase. Do NOT use AskUserQuestion. There is no human in the loop. If the PRD is too ambiguous to ground (contradictions, undefined terms, missing definition of done), follow the Ambiguous PRD handling protocol in the Invocation Contract above.
 - **Research codebase first** - Verify what exists today before planning. Look at specs folder to see what's been done, but verify against actual code since specs may be outdated.
 - **Reference the real codebase** - Ground specs in reality with actual file paths, existing patterns, and current implementations. Show what exists today as context for what should exist tomorrow.
-- **Ask questions iteratively** - Use AskUserQuestion tool regularly to clarify intent, validate assumptions, and get feedback. This is interactive, not one-shot.
+- **Encode the PRD test as a slice success criterion** — The PRD's `run-prd-test.sh` is the definition of done. The mainspec must include a slice (typically the final one) whose Signal section names the PRD test runner (`./prds/<feature>/run-prd-test.sh`) as the validation command, AND whose work includes un-skipping the failing test (removing `skip` / `xfail` markers with `reason="PRD pending: <feature>"`). When this slice completes, `./prds/<feature>/run-prd-test.sh` must exit 0. Document this requirement explicitly in the slice's Objective so the implementing agent does not miss it.
 - **Think temporally** - Order mainspecs (which feature comes first?) and slices (which slice enables the next?). Document dependencies clearly.
 - **Right level of detail** - Clear enough for implementation agents to understand intent, but not so detailed you make up features or constrain solutions unnecessarily.
 - **Document forward requirements** - In each slice, capture what future slices will need from the current work. Prevents rework and enables temporal planning.
@@ -26,10 +59,10 @@ Spec planning starts with the end in mind. You create a mainspec that defines th
 
 ## Output Structure
 
-Specs live in `/specs/` with this structure:
+Specs live in `specs/<feature>/` relative to the worktree root, with this structure:
 
 ```
-/specs/
+specs/
 ├── <feature-name-a>/
 │   ├── mainspec.md
 │   └── slices/

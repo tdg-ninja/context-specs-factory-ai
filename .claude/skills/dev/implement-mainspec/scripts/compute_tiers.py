@@ -173,7 +173,7 @@ def to_kebab(name: str) -> str:
 
 def feature_branch_name(mainspec_name: str) -> str:
     """Compute feature branch name from mainspec directory name."""
-    return f"feat/{mainspec_name}"
+    return f"feature/{mainspec_name}"
 
 
 def slice_branch_name(number: str, name: str) -> str:
