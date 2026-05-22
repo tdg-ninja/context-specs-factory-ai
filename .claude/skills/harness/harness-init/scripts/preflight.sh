@@ -25,7 +25,7 @@ have gh      && { gh auth status >/dev/null 2>&1 && ok "gh CLI (authenticated)" 
 have claude  && ok "claude CLI" || warn "claude CLI not on PATH (the dispatcher shells out to 'claude -p')"
 
 echo
-echo "=== Toolchain signals (for CLAUDE.md / local-checks / bootstrap) ==="
+echo "=== Toolchain signals (for AGENTS.md / local-checks / bootstrap) ==="
 declare -A M=(
   [package.json]="Node" [pnpm-lock.yaml]="pnpm" [yarn.lock]="yarn" [bun.lockb]="bun"
   [pyproject.toml]="Python" [requirements.txt]="pip" [uv.lock]="uv" [Pipfile]="pipenv"
@@ -44,7 +44,7 @@ ls ./*.proto >/dev/null 2>&1 && warn "protobuf — bootstrap likely needs a code
 echo
 echo "=== Inner skills (chain the dispatcher calls) ==="
 SK=.claude/skills
-for s in intent spec-planning spec-validate implement-mainspec fix-local-checks address-feedback expert-update expert; do
+for s in intent spec-planning spec-validate implement-mainspec fix-local-checks address-feedback learn capture-lesson expert; do
   if find "$SK" -type f -path "*/$s/SKILL.md" 2>/dev/null | grep -q . ; then ok "/$s"
   elif find "$SK" -type d -name "$s" 2>/dev/null | grep -q . ; then warn "/$s (dir present but no SKILL.md — stub?)"
   else miss "/$s (not installed)"; fi
@@ -54,7 +54,7 @@ echo
 echo "=== Harness artifacts (re-run / already-present check) ==="
 [[ -f scripts/poll-and-dispatch.sh ]] && warn "scripts/poll-and-dispatch.sh exists (re-run?)" || ok "scripts/poll-and-dispatch.sh absent (fresh)"
 [[ -f .harness/env ]] && warn ".harness/env exists (re-run?)" || ok ".harness/env absent (fresh)"
-[[ -s CLAUDE.md ]] && warn "CLAUDE.md is non-empty (re-run? will diff)" || ok "CLAUDE.md absent/empty (fresh)"
+[[ -s AGENTS.md ]] && warn "AGENTS.md is non-empty (re-run? will diff)" || ok "AGENTS.md absent/empty (fresh)"
 [[ -f scripts/bootstrap-worktree.sh ]] && warn "scripts/bootstrap-worktree.sh exists (re-run?)" || ok "scripts/bootstrap-worktree.sh absent (fresh)"
 [[ -f REVIEW.md ]] && warn "REVIEW.md exists" || ok "REVIEW.md absent"
 base="../$(basename "$PWD")-harness"

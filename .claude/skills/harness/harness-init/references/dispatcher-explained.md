@@ -47,35 +47,47 @@ Explain these as the "why it's safe" of the script. Each maps to an invariant.
 | step 2 | lazy claim up to capacity | No — atomic rename is the claim lock. |
 | step 3 | advance each feature one step | **This is where you add/remove pipeline steps** — one `elif` per step. |
 | step 4 | cleanup merged/closed PRs | Safe to extend (e.g., notify on cleanup). |
-| step 5 | post-merge `/expert-update` | Debounce/idempotency live here. |
+| step 5 | post-merge `/learn` (Path A — memory, ground truth) | Debounce/idempotency live here. |
+| step 6 | episodic `/capture-lesson` (Path B — learn from STUCK) | Fires per `stuck-<f>` sentinel, once each. |
 
-## The bootstrap hook — the one deviation from the canonical doc
+## The bootstrap hook — project-owned worktree provisioning
 
-The design doc's dispatcher calls `git worktree add` but never provisions the
-new worktree. A bare worktree has no `node_modules`, no `.env`, no generated
-code — so slice signals and the PRD runner fail for reasons unrelated to the
-feature. The asset shipped here adds **one hook**: immediately after every
-`git worktree add`, it runs `scripts/bootstrap-worktree.sh "$wt"` if that script
-exists and is executable. That's the whole change. If the project has no
-bootstrap script, the hook is a no-op and the dispatcher behaves exactly as the
-doc specifies.
+A bare worktree has no `node_modules`, no `.env`, no generated code — so slice
+signals and the PRD runner fail for reasons unrelated to the feature. So
+immediately after every `git worktree add`, the dispatcher runs
+`scripts/bootstrap-worktree.sh "$wt"` if that script exists and is executable.
+The hook itself is canonical (the design doc's dispatcher includes it); what's
+**project-owned** is the `bootstrap-worktree.sh` it calls — harness-init generates
+that per project (see `worktree-bootstrap.md`). If the project has no bootstrap
+script, the hook is a no-op.
 
 Make sure the user knows: this hook is why the per-feature worktrees the harness
 spins up are actually runnable.
+
+## The two memory paths (steps 5 + 6)
+
+The dispatcher feeds **two** memory write-paths, both human-merged via PR:
+
+- **Step 5 — `/learn` (Path A).** Fires once per new `origin/main` sha (idempotent
+  via `git ls-remote origin learn/<sha>`). Writes Expert shards, invariants,
+  AGENTS.md pointers, and candidate lints, and **curates** `lessons.md`. Ground
+  truth only — it never writes from a branch in flight.
+- **Step 6 — `/capture-lesson` (Path B).** A terminal STUCK in step 3 drops a
+  `.harness/stuck-<f>` sentinel; step 6 captures one episodic lesson from the
+  struggle (idempotent via `lesson-captured-<f>`). Path B only *appends*; Path A
+  *curates*. CLOSED-unmerged PRs are deliberately not a capture trigger.
 
 ## Common tweaks to offer
 
 - **Add a pipeline step** (e.g. `/security-review` between validate and
   implement): insert one `elif` in step 3 with its own sentinel check. Nothing
   else changes.
-- **PRD-runner stuck cap** (design Open Gap): the doc's dispatcher will
-  re-invoke `/implement-mainspec` forever if the *plan* is broken. Offer to add
-  a bounded retry (`.harness/implement-attempts-<f>`, cap N, then post STUCK)
-  mirroring the existing two-strike `local-check-attempts` block.
-- **Feedback round cap**: default 5 in the `feedback-rounds` block. Adjustable.
-- **Debounce window** for `/expert-update`: currently fires whenever
-  `origin/main` sha changed. A team merging many times per minute may want a
-  time-debounce.
+- **STUCK caps** (now built in): `IMPLEMENT_CAP` (default 3) bounds PRD-runner
+  retries before STUCK; `FEEDBACK_CAP` (default 5) bounds reviewer rounds. Both
+  are env-overridable in `.harness/env`. Raise for hard features, lower to fail
+  fast. Hitting either drops a `stuck-<f>` sentinel that feeds step 6.
+- **Debounce window** for `/learn`: currently fires whenever `origin/main` sha
+  changed. A team merging many times per minute may want a time-debounce.
 
 ## What NOT to let the user do
 

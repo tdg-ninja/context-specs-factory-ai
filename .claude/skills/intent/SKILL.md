@@ -159,7 +159,7 @@ With no `.claude/skills/expert/`, ground the conversation in a direct codebase s
 (structure, existing routes/commands, test setup, build). Constraints come from what you
 observe, not from the Expert. Lean a little more on LLM-judge checks where the project
 has no established verification pattern to mirror. Everything else is identical; the
-first merge will create the Expert via `/expert-update`.
+first merge will create the Expert via `/learn`.
 
 ## Hard nevers
 - **Never merge, and never push to `main`.** Humans steer at merge time.

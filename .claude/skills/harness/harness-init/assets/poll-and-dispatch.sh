@@ -18,6 +18,8 @@ SLUG="$(git config user.email | cut -d@ -f1)"
 WATCH="${WATCH_PATTERN:-prd/${SLUG}/*}"
 WORKTREE_BASE="../$(basename "$PWD")-harness"
 MAX_WORKTREES="${MAX_WORKTREES:-1}"
+IMPLEMENT_CAP="${IMPLEMENT_CAP:-3}"   # PRD-runner retries before STUCK (the plan may be wrong)
+FEEDBACK_CAP="${FEEDBACK_CAP:-5}"     # reviewer feedback rounds before STUCK
 mkdir -p .harness
 
 # Load project-local config if present (MAX_WORKTREES, WATCH_PATTERN, ...).
@@ -112,7 +114,20 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
        claude -p "/spec-validate ${feature}"      --cwd "${wt}"
 
   elif ! ( cd "${wt}" && "./prds/${feature}/run-prd-test.sh" ); then
-       claude -p "/implement-mainspec ${feature}" --cwd "${wt}"
+       # Bounded retry: if the PRD runner keeps failing, the *plan* may be broken,
+       # not just the code, and re-invoking implement forever burns compute. Stop
+       # after IMPLEMENT_CAP attempts and flag STUCK (mirrors the local-checks
+       # two-strike breaker). The stuck sentinel also triggers episodic lesson
+       # capture in step 6. (Inv 8)
+       attempts_file=".harness/implement-attempts-${feature}"
+       attempts=$(cat "${attempts_file}" 2>/dev/null || echo 0)
+       if (( attempts >= IMPLEMENT_CAP )); then
+         echo "STUCK: ${feature} failed the PRD runner ${IMPLEMENT_CAP}x; the plan may be wrong. Human intervention requested." >&2
+         touch ".harness/stuck-${feature}"
+       else
+         echo $((attempts + 1)) > "${attempts_file}"
+         claude -p "/implement-mainspec ${feature}" --cwd "${wt}"
+       fi
 
   elif [[ -x "${wt}/scripts/local-checks.sh" ]] \
        && ! ( cd "${wt}" && ./scripts/local-checks.sh ); then
@@ -121,6 +136,7 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
        attempts=$(cat "${attempts_file}" 2>/dev/null || echo 0)
        if (( attempts >= 2 )); then
          echo "STUCK: ${feature} failed local checks twice; not progressing." >&2
+         touch ".harness/stuck-${feature}"
        elif (( attempts == 0 )); then
          ( cd "${wt}" && ./scripts/local-checks.sh fix || true )
          if ! ( cd "${wt}" && git diff --quiet ); then
@@ -137,6 +153,7 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
   elif ! gh pr view "${branch}" >/dev/null 2>&1; then
        gh pr create --base main --head "${branch}" --fill
        rm -f ".harness/local-check-attempts-${feature}"
+       rm -f ".harness/implement-attempts-${feature}"
 
   # PR exists. Address reviewer findings if budget remains. Counter at
   # .harness/feedback-rounds-<f> persists for the entire PR lifetime; no reset
@@ -146,9 +163,10 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
          2>/dev/null | grep -q .; then
        rounds_file=".harness/feedback-rounds-${feature}"
        rounds=$(cat "${rounds_file}" 2>/dev/null || echo 0)
-       if (( rounds >= 5 )); then
+       if (( rounds >= FEEDBACK_CAP )); then
          gh pr comment "${branch}" --body \
-           "STUCK: feedback round limit (5) reached. Human intervention requested."
+           "STUCK: feedback round limit (${FEEDBACK_CAP}) reached. Human intervention requested."
+         touch ".harness/stuck-${feature}"
        else
          echo $((rounds + 1)) > "${rounds_file}"
          claude -p "/address-feedback ${feature}" --cwd "${wt}"
@@ -165,15 +183,36 @@ for feature in $(git for-each-ref --format='%(refname:lstrip=4)' \
     git worktree remove "$(worktree_for "$feature")" --force 2>/dev/null || true
     rm -f ".harness/feedback-rounds-${feature}"
     rm -f ".harness/local-check-attempts-${feature}"
+    rm -f ".harness/implement-attempts-${feature}"
+    rm -f ".harness/stuck-${feature}"
+    rm -f ".harness/lesson-captured-${feature}"
   fi
 done
 
-# 5. Post-merge Expert update. ls-remote check makes this idempotent across
-#    nodes: first to push the branch wins; others exit cleanly. (Inv 7)
+# 5. Post-merge memory update — Path A (procedural/semantic, GROUND TRUTH only).
+#    /learn writes Expert shards + invariants + AGENTS.md pointers + candidate
+#    lints, and CURATES lessons.md. Only main (committed code) is ground truth,
+#    so this is the only path allowed to bless/retire memory. ls-remote makes it
+#    idempotent across nodes: first to push learn/<sha> wins; others exit. (Inv 7)
 LAST="$(cat .harness/last-main-sha 2>/dev/null || echo HEAD~50)"
 CUR="$(git rev-parse origin/main)"
 if [[ "${CUR}" != "${LAST}" ]] \
-   && ! git ls-remote --exit-code origin "expert-update/${CUR}" >/dev/null 2>&1; then
-  claude -p "/expert-update --since ${LAST} --sha ${CUR}"
+   && ! git ls-remote --exit-code origin "learn/${CUR}" >/dev/null 2>&1; then
+  claude -p "/learn --since ${LAST} --sha ${CUR}"
 fi
 echo "${CUR}" > .harness/last-main-sha
+
+# 6. Episodic failure capture — Path B (learn-from-struggle, merge-or-not).
+#    A terminal STUCK (steps 3) drops a .harness/stuck-<f> sentinel. For each,
+#    capture at most one lesson. /capture-lesson judges whether the failure is
+#    generalizable and writes NOTHING for flakes / env / bad-PRD failures. Path B
+#    only APPENDS to lessons.md on a rolling memory PR; Path A (/learn) is the
+#    only thing that curates. Idempotent per feature via the lesson-captured
+#    marker. (CLOSED-unmerged PRs are deliberately NOT a capture trigger.)
+for stuck in .harness/stuck-*; do
+  [[ -e "$stuck" ]] || continue                       # literal glob = no matches
+  feature="${stuck##*/stuck-}"
+  [[ -f ".harness/lesson-captured-${feature}" ]] && continue
+  claude -p "/capture-lesson ${feature}"
+  touch ".harness/lesson-captured-${feature}"
+done

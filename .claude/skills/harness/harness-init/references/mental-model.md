@@ -46,7 +46,7 @@ outer loop and the dispatcher; the inner skills come from the catalog.
 | `.validated`           | validated          | `/implement-mainspec` until runner == 0 |
 | runner exits 0         | implemented        | open PR against `main`                  |
 | PR has findings        | in review          | `/address-feedback` (bounded)           |
-| PR merged              | done               | cleanup worktree; `/expert-update`      |
+| PR merged              | done               | cleanup worktree; `/learn`              |
 
 "Done" is one thing only: `./prds/<f>/run-prd-test.sh` exits 0. The harness
 contracts on that exit code and nothing else.
@@ -63,7 +63,7 @@ recovery story: `kill -9` mid-step leaves nothing the next tick can't sort out.
 
 Exactly two points:
 1. **Confirming a PRD** (via `/intent`, in their own checkout).
-2. **Merging a PR** (the feature PR, and later the expert-update PR).
+2. **Merging a PR** (the feature PR, and later the `/learn` memory PR).
 
 Everything between is the harness. The loop never merges — that is the steering
 input the system is built around.
@@ -71,6 +71,6 @@ input the system is built around.
 ## What harness-init is actually standing up
 
 The outer loop (a `/loop` session), the dispatcher script, its config, the
-agent contract (`CLAUDE.md`), and the provisioning that makes per-feature
+agent contract (`AGENTS.md`), and the provisioning that makes per-feature
 worktrees runnable. The inner skills (`/intent`, `/spec-planning`, etc.) are
 installed from the catalog; harness-init wires them, it does not author them.

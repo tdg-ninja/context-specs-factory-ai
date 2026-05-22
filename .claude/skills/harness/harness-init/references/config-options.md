@@ -35,6 +35,16 @@ Which PRD branches this harness claims. `<your-slug>` derives from
 Note the glob: `*` matches one path component. Per-dev is `prd/alice/*`; shared
 is `prd/*/*` (author component + feature component).
 
+### STUCK caps (`IMPLEMENT_CAP` default `3`, `FEEDBACK_CAP` default `5`)
+
+Bounded-retry circuit breakers, so a broken plan or an unconvergeable review can't
+loop forever. `IMPLEMENT_CAP` is how many times the dispatcher re-invokes
+`/implement-mainspec` while the PRD runner still fails before declaring STUCK;
+`FEEDBACK_CAP` is the reviewer-feedback round limit. Hitting either drops a
+`.harness/stuck-<f>` sentinel, which (a) halts further progress on that feature and
+(b) triggers `/capture-lesson` to record what went wrong. Raise them for hard
+features; lower them to fail faster. Both are env-overridable in `.harness/env`.
+
 ### Loop interval (in the `/loop` invocation, not `.harness/env`)
 
 `/loop 5m /poll-and-dispatch` — the `5m` is the tick cadence. 5 minutes is a
@@ -52,12 +62,16 @@ no-ops); longer = lazier. This is a UX knob, not a correctness one.
 
 Holds runtime state, all re-derivable, none of it secret:
 - `env` — the config above (committed, or kept local — see below).
-- `last-main-sha` — last-seen `origin/main` for expert-update debounce.
-- `feedback-rounds-<f>`, `local-check-attempts-<f>` — per-feature counters.
+- `last-main-sha` — last-seen `origin/main` for the post-merge `/learn` debounce.
+- `feedback-rounds-<f>`, `local-check-attempts-<f>`, `implement-attempts-<f>` —
+  per-feature retry counters (each gates a STUCK circuit breaker).
+- `stuck-<f>` — sentinel: this feature hit terminal STUCK (triggers `/capture-lesson`).
+- `lesson-captured-<f>` — idempotency marker so a lesson is captured at most once.
 
 **Counters must be gitignored.** They are per-node runtime state, not project
 artifacts. harness-init adds `.harness/feedback-rounds-*`,
-`.harness/local-check-attempts-*`, and `.harness/last-main-sha` to
+`.harness/local-check-attempts-*`, `.harness/implement-attempts-*`,
+`.harness/stuck-*`, `.harness/lesson-captured-*`, and `.harness/last-main-sha` to
 `.gitignore`. Whether `.harness/env` is committed is a choice: commit it to
 share defaults across a team's checkouts; keep it local (gitignored) if each
 dev tunes their own. Recommend committing `env` and ignoring the counters.
