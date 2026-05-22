@@ -1,6 +1,6 @@
 ---
 name: spec-planning
-description: Reads a PRD (`prds/<feature>/prd.md`) plus its failing test and `run-prd-test.sh`, grounds them in codebase research, and produces `specs/<feature>/mainspec.md` plus dependency-ordered slices. Encodes the PRD test as a slice success criterion so implementation completion implies PRD test green. Touches `specs/<feature>/.planning-done` as its final committed action. Agent-first — no human-in-the-loop.
+description: Reads a PRD (`prds/<feature>/prd.md`) plus its executable `run-prd-test.sh` (and any helper artifacts under `prds/<feature>/`), grounds them in codebase research, and produces `specs/<feature>/mainspec.md` plus dependency-ordered slices. Encodes the runner as a slice success criterion so implementation completion implies `./prds/<feature>/run-prd-test.sh` exits 0. Touches `specs/<feature>/.planning-done` as its final committed action. Agent-first — no human-in-the-loop.
 ---
 
 # Spec Planning
@@ -16,7 +16,7 @@ Turn a PRD into a structured Spec Plan using Spec-Driven Development. Agent-firs
 **Inputs read from disk (paths relative to cwd):**
 - `prds/<feature>/prd.md` — the why, user story, definition of done, constraints, out-of-scope.
 - `prds/<feature>/run-prd-test.sh` — executable test runner for this feature's PRD test. Exits 0 when the feature is done.
-- The failing test referenced by the PRD (path discoverable from `run-prd-test.sh`, or scan-found in the project's test directory marked `skip` / `xfail` with `reason="PRD pending: <feature>"`).
+- Any verification artifacts under `prds/<feature>/` invoked by `run-prd-test.sh` — fixtures, LLM-judge prompts, helper test files, etc. The runner is the single contract; its internals are intentionally flexible (pure unit test, LLM-as-judge, deterministic shell checks, or any mix).
 - The current codebase.
 
 **Outputs to disk (paths relative to cwd):**
@@ -48,7 +48,7 @@ Spec planning starts with the end in mind. You create a mainspec that defines th
 - **Ground entirely in the PRD and codebase** — Operate from `prds/<feature>/prd.md` and the codebase. Do NOT use AskUserQuestion. There is no human in the loop. If the PRD is too ambiguous to ground (contradictions, undefined terms, missing definition of done), follow the Ambiguous PRD handling protocol in the Invocation Contract above.
 - **Research codebase first** - Verify what exists today before planning. Look at specs folder to see what's been done, but verify against actual code since specs may be outdated.
 - **Reference the real codebase** - Ground specs in reality with actual file paths, existing patterns, and current implementations. Show what exists today as context for what should exist tomorrow.
-- **Encode the PRD test as a slice success criterion** — The PRD's `run-prd-test.sh` is the definition of done. The mainspec must include a slice (typically the final one) whose Signal section names the PRD test runner (`./prds/<feature>/run-prd-test.sh`) as the validation command, AND whose work includes un-skipping the failing test (removing `skip` / `xfail` markers with `reason="PRD pending: <feature>"`). When this slice completes, `./prds/<feature>/run-prd-test.sh` must exit 0. Document this requirement explicitly in the slice's Objective so the implementing agent does not miss it.
+- **Encode the PRD test as a slice success criterion** — The PRD's `run-prd-test.sh` is the definition of done. The mainspec must include a slice (typically the final one) whose Signal section names the PRD test runner (`./prds/<feature>/run-prd-test.sh`) as the validation command. When this slice completes, `./prds/<feature>/run-prd-test.sh` must exit 0. Document this requirement explicitly in the slice's Objective so the implementing agent does not miss it. The runner is intentionally opaque to spec-planning: it may invoke a unit test, an LLM-as-judge prompt, deterministic shell checks, or any mix — the slice's job is to make it pass, not to assume its internals.
 - **Think temporally** - Order mainspecs (which feature comes first?) and slices (which slice enables the next?). Document dependencies clearly.
 - **Right level of detail** - Clear enough for implementation agents to understand intent, but not so detailed you make up features or constrain solutions unnecessarily.
 - **Document forward requirements** - In each slice, capture what future slices will need from the current work. Prevents rework and enables temporal planning.

@@ -163,7 +163,7 @@ For each candidate finding, classify as **impactful** or **nitpick**:
   - Missing slice dependency in the Dependency Map
   - Broken slice DAG (cycle, dangling reference)
   - Slice that contradicts the PRD's definition of done
-  - Slice missing the un-skip + run-prd-test step (for the slice that should encode PRD completion)
+  - Slice missing the run-prd-test gate (the final slice's Signal must invoke `./prds/<feature>/run-prd-test.sh` and require exit 0 as the PRD-completion criterion)
 
   **→ Apply the fix.**
 
