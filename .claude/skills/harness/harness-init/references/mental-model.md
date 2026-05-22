@@ -1,0 +1,76 @@
+# Mental model — what the harness is
+
+Read this first. It is the condensed version of the design doc, written so the
+skill can explain the harness to a developer who has never seen it. When you
+walk a user through setup, narrate from this — do not assume they have read the
+design doc.
+
+## One sentence
+
+The harness is a polling loop that watches a git branch namespace, and for each
+feature in flight, runs exactly one spec-driven-development step per tick in an
+isolated worktree, until a PR is open against `main` for a human to merge.
+
+## Three layers, independent
+
+```
+OUTER LOOP        a long-lived Claude Code session (/loop 5m), or cron, or CI.
+  |               Owns TIMING only. Knows nothing about the work.
+  v
+DISPATCHER        scripts/poll-and-dispatch.sh. Pure bash, zero LLM calls.
+  |               Owns ROUTING: reads disk, decides the next skill per branch,
+  v               shells out. The if/elif chain IS the state machine.
+INNER LOOP        one fresh `claude -p "/skill ..."` subprocess per step.
+                  Owns THE WORK. Fresh context every time, exits when done.
+```
+
+You can swap any layer without touching the others. harness-init sets up the
+outer loop and the dispatcher; the inner skills come from the catalog.
+
+## Why the split matters for setup
+
+- **The outer loop must never do real work.** `/loop 5m /poll-and-dispatch`
+  re-runs in the *same* session every tick; if it did work there, context would
+  bloat and rot by tick 10. The shim skill does one thing: call the script. All
+  real work happens in `claude -p` subprocesses with fresh context.
+- **The dispatcher is deterministic.** No model in the decision path. This is
+  what makes crash recovery free and behavior predictable from disk state.
+
+## The state machine in one table
+
+| Branch state           | Means              | Next action the dispatcher takes        |
+|------------------------|--------------------|-----------------------------------------|
+| `prd/<author>/<f>`     | waiting in queue   | atomic-rename to `feature/<f>` (claim)  |
+| `feature/<f>` no specs | claimed, unplanned | `/spec-planning`                        |
+| `.planning-done`       | planned            | `/spec-validate`                        |
+| `.validated`           | validated          | `/implement-mainspec` until runner == 0 |
+| runner exits 0         | implemented        | open PR against `main`                  |
+| PR has findings        | in review          | `/address-feedback` (bounded)           |
+| PR merged              | done               | cleanup worktree; `/expert-update`      |
+
+"Done" is one thing only: `./prds/<f>/run-prd-test.sh` exits 0. The harness
+contracts on that exit code and nothing else.
+
+## The artifacts ARE the state
+
+There is no database, no in-memory queue, no "what step are we on" file. A
+sentinel file existing IS that phase being done. The branch namespace IS the
+work registry. Counters live in `.harness/`. Everything the dispatcher needs is
+re-derivable from `git` + the filesystem on every tick. That is the whole
+recovery story: `kill -9` mid-step leaves nothing the next tick can't sort out.
+
+## Where the human steers
+
+Exactly two points:
+1. **Confirming a PRD** (via `/intent`, in their own checkout).
+2. **Merging a PR** (the feature PR, and later the expert-update PR).
+
+Everything between is the harness. The loop never merges — that is the steering
+input the system is built around.
+
+## What harness-init is actually standing up
+
+The outer loop (a `/loop` session), the dispatcher script, its config, the
+agent contract (`CLAUDE.md`), and the provisioning that makes per-feature
+worktrees runnable. The inner skills (`/intent`, `/spec-planning`, etc.) are
+installed from the catalog; harness-init wires them, it does not author them.

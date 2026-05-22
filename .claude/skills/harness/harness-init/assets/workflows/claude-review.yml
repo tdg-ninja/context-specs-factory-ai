@@ -1,0 +1,37 @@
+# Self-hosted PR reviewer for the harness (Flow 2.5).
+# Posts findings on PR open and on every push, governed by REVIEW.md at repo
+# root. Non-conversational: the implementer acts on findings by pushing commits,
+# not by replying to threads.
+#
+# Requires repo secret ANTHROPIC_API_KEY. Pin the action version before use.
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  issue_comment:
+    types: [created]
+
+jobs:
+  review:
+    # Run on PR open/push, or when someone comments "@claude review".
+    if: >
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '@claude review'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Claude review
+        uses: anthropics/claude-code-action@v1   # pin to a real release tag
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          mode: review
+          # REVIEW.md at repo root carries the convergence + PRD-aware rules.
+          review_instructions_path: REVIEW.md

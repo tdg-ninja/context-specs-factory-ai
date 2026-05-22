@@ -1,0 +1,71 @@
+# [Project Name]
+
+## Onboarding (read before doing anything non-trivial)
+
+1. `.claude/skills/expert/SKILL.md` — this project's Expert. Long-term memory.
+2. `prds/<f>/prd.md` — why a feature exists. `prds/<f>/run-prd-test.sh` — its runnable definition of done.
+3. `specs/<f>/mainspec.md` (+ `slices/`) — the plan for a feature.
+4. `designInvariants.md` — canonical invariants; tiebreaker when prose and behavior disagree.
+
+## The Expert skill
+
+The `expert` skill is this project's procedural memory. It encodes:
+- Architectural decisions
+- How features get verified in this codebase
+- Patterns to follow (DO/DON'T, with examples)
+- Procedural steps for adding new features
+- Core files and abstractions
+
+**Always consult the Expert** before:
+- Adding a new feature
+- Debugging unexpected behavior
+- Choosing where new code should live
+- Deciding how to verify a change
+
+Invoke via `/expert` or read `.claude/skills/expert/references/*.md` directly.
+
+The Expert reflects what is **committed to main**, not what is planned.
+Trust the Expert for current reality; trust PRDs and specs for intended
+direction.
+
+## The skill chain
+
+Skills walk a state machine forward, one step at a time. Each skill reads
+its predecessor's artifacts, does its work, commits, and writes a sentinel
+as its final action. The next skill in the chain fires when its trigger
+condition is met.
+
+| Skill | Fires when | Writes |
+|---|---|---|
+| `/intent` | Human initiates | `prds/<f>/{prd.md, run-prd-test.sh}` on `prd/<author>/<f>` |
+| `/spec-planning` | `specs/<f>/.planning-done` absent on `feature/<f>` | mainspec + slices + `.planning-done` |
+| `/spec-validate` | `.planning-done` present, `.validated` absent | in-place spec edits + `.validated` |
+| `/implement-mainspec` | `.validated` present, `prds/<f>/run-prd-test.sh` exits non-zero | commits on `feature/<f>` until runner exits 0 |
+| `/fix-local-checks` | `scripts/local-checks.sh` fails post-implement | patch + commit |
+| `/address-feedback` | PR has unresolved reviewer findings (budget enforced externally) | commits for Clear; replies for Ambiguous/Complex/Out-of-Scope |
+| `/expert-update` | post-merge to main, no `expert-update/<sha>` on origin | Expert shard diffs + changelog |
+
+**Idempotency rule.** Every skill must be safe to re-invoke on the same disk
+state. Commit all required artifacts *before* writing your sentinel. A crash
+mid-skill leaves the next invocation a clean re-derivation from disk.
+
+## Branch lifecycle
+
+    prd/<author>/<feature>   ← /intent output: prd.md + run-prd-test.sh.
+                                Do not work on these directly; an atomic
+                                rename to feature/<f> is the claim.
+    feature/<feature>         ← active implementation lane.
+    main                      ← humans merge only. Never push directly.
+    expert-update/<sha>       ← auto-generated post-merge; humans merge.
+
+## Non-bypassable verification
+
+Four layers gate "done." All four must pass; none can be talked past.
+
+1. **Pre-commit hooks** — linters, formatters, type checks ([PROJECT CONFIG]).
+2. **Slice signals** — each slice's `Signal` section runs during `/implement-slice`.
+3. **CI** — full test suite, full type check, full lint.
+4. **PRD runner** — `./prds/<feature>/run-prd-test.sh` must exit 0 before merge.
+   This is the definition of done.
+
+Anything bypassing these layers is a bug, not a feature.

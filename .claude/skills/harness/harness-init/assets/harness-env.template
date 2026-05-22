@@ -1,0 +1,16 @@
+# .harness/env — harness configuration, sourced by scripts/poll-and-dispatch.sh
+#
+# This file is committed so a team's checkouts share defaults. The per-feature
+# COUNTER files in .harness/ (feedback-rounds-*, local-check-attempts-*,
+# last-main-sha) are runtime state and are gitignored — never commit those.
+
+# How many features the harness works in parallel.
+#   1 = single worktree, FIFO (recommended default for a single developer).
+#   2+ = bounded parallelism; each feature gets its own worktree (more disk).
+MAX_WORKTREES=1
+
+# Which PRD branches this harness claims (git refspec glob; * = one component).
+#   prd/<your-slug>/*  = per-dev (default): only your own PRDs, your own quota.
+#   prd/*/*            = shared pool: all harnesses race; atomic rename is safe.
+# Leave unset to use the per-dev default derived from your git email.
+# WATCH_PATTERN=prd/your-slug/*
