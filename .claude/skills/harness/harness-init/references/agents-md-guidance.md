@@ -38,7 +38,7 @@ coordination, and hackable seams belong in `SETUP.md`. If you're tempted to expl
   non-trivial work" rule, "reflects what's committed to main."
 - The **skill chain** table — the state machine. Canonical; do not reorder or
   reword the trigger conditions.
-- The **Memory: two shapes, two write-paths** section.
+- The **Memory: two shapes, one write path** section.
 - The **branch lifecycle** block.
 - The **non-bypassable verification** section's four layers.
 

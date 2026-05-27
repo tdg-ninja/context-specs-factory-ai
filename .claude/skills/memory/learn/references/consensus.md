@@ -16,8 +16,8 @@ surfaces is the common, correct outcome.
    bounded diff, not generation).
 2. Give each: the merged diff, the current Expert shards, the touched AGENTS.md
    files, and the PRD/spec for the *why*.
-3. Each votes **per surface** (shards / invariants / lessons / AGENTS.md): does
-   anything need to change, and if so what?
+3. Each votes **per surface** (shards / invariants / AGENTS.md): does anything
+   need to change, and if so what?
 4. Apply only changes that meet the **threshold (default 2/3)**. Discard 1/3.
 
 ## Tuning
@@ -25,6 +25,8 @@ surfaces is the common, correct outcome.
 - Lower to a single reviewer only for low-stakes projects that want speed over
   precision — not recommended for invariant/lint promotion, which should stay
   consensus-gated *and* human-confirmed.
+- **Human-authored memory edits already in the diff bypass voting** (see SKILL.md
+  P7) — they're ground truth. Vote on what to *extend*, not whether to apply them.
 
 ## Drift signal
 If consensus returns 0/3 for *many* consecutive merges, that's worth noticing: the

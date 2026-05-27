@@ -35,15 +35,23 @@ Which PRD branches this harness claims. `<your-slug>` derives from
 Note the glob: `*` matches one path component. Per-dev is `prd/alice/*`; shared
 is `prd/*/*` (author component + feature component).
 
-### STUCK caps (`IMPLEMENT_CAP` default `3`, `FEEDBACK_CAP` default `5`)
+### STUCK caps
 
-Bounded-retry circuit breakers, so a broken plan or an unconvergeable review can't
-loop forever. `IMPLEMENT_CAP` is how many times the dispatcher re-invokes
-`/implement-mainspec` while the PRD runner still fails before declaring STUCK;
-`FEEDBACK_CAP` is the reviewer-feedback round limit. Hitting either drops a
-`.harness/stuck-<f>` sentinel, which (a) halts further progress on that feature and
-(b) triggers `/capture-lesson` to record what went wrong. Raise them for hard
-features; lower them to fail faster. Both are env-overridable in `.harness/env`.
+Bounded-retry circuit breakers — every step has one, so the loop can't run away.
+At cap, the dispatcher signals STUCK on the PR (opening it as a draft if no PR
+exists yet) with the session log + a diagnosis-first checklist for the human, and
+halts that feature.
+
+| Var | Default | Step it bounds |
+|---|---|---|
+| `PLANNING_CAP` | 2 | `/spec-planning` (skill crashes or never writes sentinel) |
+| `VALIDATE_CAP` | 2 | `/spec-validate` (same) |
+| `IMPLEMENT_CAP` | 3 | `/implement-mainspec` (PRD runner keeps failing) |
+| `LOCAL_CHECKS_CAP` | 2 | `scripts/local-checks.sh` two-strike (auto-fix → focused LLM fix → STUCK) |
+| `FEEDBACK_CAP` | 5 | reviewer feedback rounds |
+
+All env-overridable in `.harness/env`. Raise for hard features; lower to fail
+faster.
 
 ### Loop interval (in the `/loop` invocation, not `.harness/env`)
 
@@ -63,15 +71,21 @@ no-ops); longer = lazier. This is a UX knob, not a correctness one.
 Holds runtime state, all re-derivable, none of it secret:
 - `env` — the config above (committed, or kept local — see below).
 - `last-main-sha` — last-seen `origin/main` for the post-merge `/learn` debounce.
-- `feedback-rounds-<f>`, `local-check-attempts-<f>`, `implement-attempts-<f>` —
-  per-feature retry counters (each gates a STUCK circuit breaker).
-- `stuck-<f>` — sentinel: this feature hit terminal STUCK (triggers `/capture-lesson`).
-- `lesson-captured-<f>` — idempotency marker so a lesson is captured at most once.
+- `planning-attempts-<f>`, `validate-attempts-<f>`, `implement-attempts-<f>`,
+  `local-check-attempts-<f>`, `feedback-rounds-<f>` — per-feature retry counters
+  (each gates a STUCK circuit breaker).
+- `stuck-<f>` (sentinel), `stuck-output-<f>.log` (tee'd failing output),
+  `stuck-body-<f>.md` (the PR-body composed at STUCK) — written when a cap hits;
+  cleared on merge/close.
+- `sessions-<f>.tsv` — every `claude -p` invocation for this feature, one row each
+  (timestamp, step, attempt, session_id, exit, duration). The STUCK PR body
+  quotes the tail of this file so the human can open the trace by session_id.
 
-**Counters must be gitignored.** They are per-node runtime state, not project
-artifacts. harness-init adds `.harness/feedback-rounds-*`,
+**Counters and session logs must be gitignored.** They are per-node runtime state,
+not project artifacts. harness-init adds `.harness/feedback-rounds-*`,
 `.harness/local-check-attempts-*`, `.harness/implement-attempts-*`,
-`.harness/stuck-*`, `.harness/lesson-captured-*`, and `.harness/last-main-sha` to
+`.harness/planning-attempts-*`, `.harness/validate-attempts-*`,
+`.harness/stuck-*`, `.harness/sessions-*.tsv`, and `.harness/last-main-sha` to
 `.gitignore`. Whether `.harness/env` is committed is a choice: commit it to
 share defaults across a team's checkouts; keep it local (gitignored) if each
 dev tunes their own. Recommend committing `env` and ignoring the counters.

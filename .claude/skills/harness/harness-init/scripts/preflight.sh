@@ -44,7 +44,7 @@ ls ./*.proto >/dev/null 2>&1 && warn "protobuf — bootstrap likely needs a code
 echo
 echo "=== Inner skills (chain the dispatcher calls) ==="
 SK=.claude/skills
-for s in intent spec-planning spec-validate implement-mainspec fix-local-checks address-feedback learn capture-lesson expert; do
+for s in intent spec-planning spec-validate implement-mainspec fix-local-checks address-feedback learn expert; do
   if find "$SK" -type f -path "*/$s/SKILL.md" 2>/dev/null | grep -q . ; then ok "/$s"
   elif find "$SK" -type d -name "$s" 2>/dev/null | grep -q . ; then warn "/$s (dir present but no SKILL.md — stub?)"
   else miss "/$s (not installed)"; fi

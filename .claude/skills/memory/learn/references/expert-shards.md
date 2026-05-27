@@ -15,15 +15,13 @@ directly. It is shaped exactly like a framework expert (so it composes with them
 │   ├── procedural.md      # "How to add a new feature here" — the steps
 │   ├── core-files.md      # Key files & abstractions, with paths
 │   ├── invariants.md      # HARD rules the codebase upholds (see below)
-│   ├── lessons.md         # Episodic negative memory (see below)
 │   └── changelog.md       # Provenance: what /learn changed, when, why, vote
 └── scripts/
     └── (optional signal scripts, like any expert)
 ```
 
-## The two shards this design adds
+## The shard this design adds: invariants.md (hard rules, distinct from patterns.md)
 
-### invariants.md — hard rules (distinct from patterns.md)
 `patterns.md` is *soft* ("prefer composition here"); `invariants.md` is *hard*
 ("Repo layer never imports Service"). The distinguishing test: **can it be
 mechanically checked?** If yes, it's an invariant and the highest-value ones become
@@ -31,13 +29,6 @@ lints (see `invariant-discovery.md`). If it needs judgment, it's a pattern.
 
 Each invariant entry: the rule, *why* it holds, and — once promoted — a pointer to
 its lint (`scripts/lints/<name>.sh`).
-
-### lessons.md — episodic negative memory
-"X failed because Y — don't reach for X here." Appended by `/capture-lesson` (Path
-B) from real struggles; curated by `/learn` (Path A). Every entry is **dated**,
-**attributed** (which feature/sha, what tripped), and framed as a **reason, not a
-prohibition** (so a future agent can re-evaluate whether Y still holds). See
-`lessons-curation.md`.
 
 ## SKILL.md shape
 Mirror the framework-expert shape (`expert-sdd-creator`'s `expert-structure.md`): a
@@ -51,4 +42,3 @@ On a fresh project (no Expert) or `--rebuild`, seed every shard by scanning
 committed code: derive `core-files.md` from the actual tree, `verification.md` from
 the test/CI setup, `architecture.md` from the module layering, `invariants.md` from
 rules the code visibly upholds (conservatively — see `invariant-discovery.md`).
-Leave `lessons.md` empty if there's nothing to say; never invent failures.

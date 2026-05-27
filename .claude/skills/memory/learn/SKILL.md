@@ -1,6 +1,6 @@
 ---
 name: learn
-description: Update the project's long-term memory after a merge to main. Reads the merged diff and the current memory, then writes Expert shards, discovered invariants, candidate lints, and AGENTS.md pointers, and curates lessons.md — all on a reviewable learn/<sha> PR. Use post-merge (the harness invokes it automatically) or with --rebuild to regenerate memory from scratch. Triggers - learn, expert-update, update memory, update expert, post-merge memory, self-improve (project)
+description: Update the project's long-term memory after a merge to main. Reads the merged diff and the current memory, then writes Expert shards, discovered invariants, candidate lints, and AGENTS.md pointers — all on a reviewable learn/<sha> PR. Use post-merge (the harness invokes it automatically) or with --rebuild to regenerate memory from scratch. Triggers - learn, expert-update, update memory, update expert, post-merge memory, self-improve (project)
 ---
 
 # learn
@@ -9,8 +9,8 @@ This is how the project **gets better on every merge.** When code lands on main,
 `/learn` reconciles the project's long-term memory with the new ground truth: it
 updates the **Expert** (procedural + semantic memory, pulled on demand) and the
 **AGENTS.md** map (eager memory, loaded as agents traverse the repo), discovers
-and records **invariants**, drafts **candidate lints**, and **curates** the
-episodic `lessons.md` that `/capture-lesson` appends to.
+project invariants, and drafts candidate **lints** (the highest-value memory,
+because a lint is a rule the agent cannot ship past).
 
 You run **headless**, invoked by the dispatcher as the post-merge step. Your
 output is a single reviewable PR — never an auto-merge. Humans steer at merge.
@@ -22,13 +22,11 @@ output is a single reviewable PR — never an auto-merge. Humans steer at merge.
 > reality — so you only ever write from a merged diff, never from a branch in
 > flight. This is *why* `/learn` runs post-merge and nowhere else.
 
-Two memory write-paths exist; you are **Path A**. `/capture-lesson` is **Path B**
-(episodic, fires on failure, append-only). The division is strict:
-
-- **Path B proposes.** It appends raw, provisional lessons from struggles.
-- **Path A (you) disposes.** You are the *only* path allowed to bless, promote,
-  reconcile, or retire memory — because only a merge is ground truth. You curate
-  what Path B left behind.
+There is **one memory write path** in this design: you, on merge, via a
+human-merged PR. STUCK features are handled by the human directly (their first
+job there is to identify the context defect that misled the agent, correct it on
+the feature branch, then fix the code — see SETUP.md); their corrections ride
+into main with the feature merge, and **you observe them in the diff you read**.
 
 ## The philosophy
 
@@ -53,10 +51,13 @@ Two memory write-paths exist; you are **Path A**. `/capture-lesson` is **Path B*
 - **P6 — Invariants are discovered, then promoted.** You may notice architectural
   rules the codebase upholds. Record them as prose first; flag the mechanically
   checkable ones as candidate **lints** (the highest-value memory, because a lint
-  is a rule the agent *cannot* skip past). See `references/invariant-discovery.md`.
-- **P7 — Curate, don't accumulate.** You own the garbage collection of `lessons.md`:
-  dedup, merge, and **retire any lesson this merge contradicts** (ground truth
-  invalidates a stale warning). See `references/lessons-curation.md`.
+  is a rule the agent *cannot* ship past). See `references/invariant-discovery.md`.
+- **P7 — Human-authored memory edits are authoritative.** When the merged diff
+  *already* touches AGENTS.md, an Expert shard, or a spec, treat those changes as
+  **ground truth, not as a proposal to second-guess.** They came from a human
+  resolving a STUCK or making a deliberate correction. Your job there is to
+  *extend* (what else, given this correction, now needs to change?) — not to
+  vote on whether to apply it.
 - **P8 — Reviewable, revertible, human-merged.** Everything lands on `learn/<sha>`
   with a changelog entry citing the merge. Never auto-merge.
 
@@ -67,13 +68,11 @@ tunes to its taste:
 
 - `references/routing-rules.md` — the four destinations + the five-predicate test
   for eager placement + the line-count caps. *(Primary hackable seam.)*
-- `references/expert-shards.md` — the shard taxonomy and templates (what each shard
-  holds; how the Expert skill is shaped).
+- `references/expert-shards.md` — the shard taxonomy and templates.
 - `references/agents-md-guidance.md` — map-not-manual; which folders earn a nested
   AGENTS.md; the freshness contract.
 - `references/invariant-discovery.md` — how to surface invariants and draft lints
   without overfitting.
-- `references/lessons-curation.md` — dedup / prune / reconcile.
 - `references/consensus.md` — the voting threshold (2/3 default) and how to run it.
 
 ## The flow
@@ -94,11 +93,16 @@ Read: the diff for `--since <sha>..--sha <sha>`; the current Expert shards
 (root + any in changed folders); and the PRD(s)/spec(s) for the merged feature if
 present (`prds/<f>/`, `specs/<f>/`) for the *why*.
 
+**Notice whether the diff itself touches memory files** (AGENTS.md, Expert shards,
+spec sections). If so, you're looking at a human's context correction — see P7;
+those changes are ground truth.
+
 ### Step 2 — Consensus
 Spawn 2–3 cheap parallel reviewers (`references/consensus.md`). Each reads the diff
 + current memory and votes, **per surface**, on whether anything must change:
-shards, invariants, lessons curation, AGENTS.md. Keep only changes that clear the
-threshold. A 0/3 on every surface is a valid, common outcome — log it and no-op.
+shards, invariants, AGENTS.md. (No votes against human-authored memory edits — P7.)
+Keep only changes that clear the threshold. A 0/3 on every surface is a valid,
+common outcome — log it and no-op.
 
 ### Step 3 — Route
 For each surviving candidate fact, apply `references/routing-rules.md`: lint /
@@ -116,8 +120,6 @@ eager AGENTS.md / lazy Expert shard / nowhere. When in doubt, prefer the Expert
 - **AGENTS.md** — update the relevant map's pointer(s). Propose a *new* nested
   AGENTS.md only when the merge introduced a folder-local rule that clears the
   five-predicate bar and no file exists. Stay under the caps.
-- **lessons.md** — curate (`references/lessons-curation.md`): dedup, merge, and
-  retire any lesson this merge contradicts.
 
 ### Step 5 — Validate
 Run `scripts/check-agents-md.sh` (referenced paths exist, cross-links resolve,
@@ -130,17 +132,11 @@ touched and the consensus vote. Open the `learn/<sha>` PR. Done.
 ## Invocation & output contract
 - **Invoked by:** the dispatcher, `claude -p "/learn --since <sha> --sha <sha>"`.
   Also runnable by a human with `--rebuild` (regenerate memory from main).
-- **Writes:** under `.claude/skills/expert/` (shards incl. `invariants.md`,
-  `lessons.md`, `changelog.md`), `scripts/lints/*` + `scripts/local-checks.sh`
-  wiring, and `AGENTS.md` files across the repo.
+- **Writes:** under `.claude/skills/expert/` (shards incl. `invariants.md` and
+  `changelog.md`), `scripts/lints/*` + `scripts/local-checks.sh` wiring, and
+  `AGENTS.md` files across the repo.
 - **Completion signal:** the pushed `learn/<sha>` branch + open PR. Idempotent via
   `git ls-remote origin learn/<sha>`.
-
-## changelog.md vs lessons.md (don't conflate)
-- `changelog.md` — **provenance/audit**: what `/learn` changed, when, why, and the
-  vote. Read by the human reviewing the PR and by drift detection. Append-only.
-- `lessons.md` — **episodic negative memory** consulted by future reasoning ("X
-  failed because Y"). Curated (dedup/prune/retire). Different reader, different job.
 
 ## Hard nevers
 - **Never write memory for uncommitted or planned work** (P1). Diff against main only.
@@ -151,4 +147,6 @@ touched and the consensus vote. Open the `learn/<sha>` PR. Done.
   that reddens the merge it was born from is wrong.
 - **Never frame an invariant as taste.** If it needs judgment, it's a pattern
   (Expert), not an invariant (lint/hard rule).
-- **Never append raw lessons** — that's `/capture-lesson`'s job. You *curate*.
+- **Never second-guess a memory edit that's already in the merged diff** (P7) —
+  the human resolved a STUCK or made a deliberate correction; your job is to
+  *extend* it, not vote on it.

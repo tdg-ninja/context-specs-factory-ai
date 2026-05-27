@@ -75,8 +75,10 @@ the chosen values. Add the runtime counter files to `.gitignore`:
 .harness/feedback-rounds-*
 .harness/local-check-attempts-*
 .harness/implement-attempts-*
+.harness/planning-attempts-*
+.harness/validate-attempts-*
 .harness/stuck-*
-.harness/lesson-captured-*
+.harness/sessions-*.tsv
 .harness/last-main-sha
 ```
 
@@ -189,22 +191,28 @@ claude
 Offer to start it if they're ready. Finish with the **daily flow** recap:
 1. `/intent` in their normal checkout → confirm a PRD → walk away.
 2. Harness picks it up, runs the chain, opens a PR.
-3. Review and merge the feature PR.
-4. Review and merge the `/learn` PR that follows (memory updates), plus the rolling
-   `learn/lessons` PR whenever it accumulates lessons from any stuck features.
+3. Either:
+   - **Normal path:** review and merge the feature PR. Then review and merge the
+     `/learn` PR that follows (memory updates).
+   - **STUCK path:** if any step hits its retry cap, the dispatcher posts a STUCK
+     PR (or comment) with the session log + a diagnosis-first checklist. **Your
+     first job is the context defect, not the code** — figure out which
+     `AGENTS.md` / Expert / spec / PRD content misled the agent, correct it on
+     the branch, *then* fix the code and merge. `/learn` picks up the context
+     correction at merge.
 
 ---
 
 ## Inner skill dependency
 
 The dispatcher calls `/intent`, `/spec-planning`, `/spec-validate`,
-`/implement-mainspec`, `/fix-local-checks`, `/address-feedback`, `/learn`, and
-`/capture-lesson`. harness-init wires the **outer** harness; it does not author
-these. Preflight reports which are installed. If some are missing, set up the
-harness anyway and tell the user clearly which skills must be installed from the
-catalog before the chain runs end to end — the harness will dispatch to them the
-moment they exist. (`/learn` and `/capture-lesson` are the memory skills under
-`.claude/skills/memory/`; the project's Expert is born from the first `/learn`.)
+`/implement-mainspec`, `/fix-local-checks`, `/address-feedback`, and `/learn`.
+harness-init wires the **outer** harness; it does not author these. Preflight
+reports which are installed. If some are missing, set up the harness anyway and
+tell the user clearly which skills must be installed from the catalog before the
+chain runs end to end — the harness will dispatch to them the moment they exist.
+(`/learn` is the memory skill under `.claude/skills/memory/`; the project's
+Expert is born from the first `/learn`.)
 
 ## Re-running
 

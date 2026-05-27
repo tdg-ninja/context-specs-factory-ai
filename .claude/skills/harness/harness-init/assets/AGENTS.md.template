@@ -16,8 +16,8 @@
 
 The `expert` skill is this project's long-term memory — pulled on demand, not
 always in context. It encodes architectural decisions, how features get verified
-here, patterns (DO/DON'T), procedural steps for new features, core files, the
-project's **invariants** (hard rules), and **lessons** (what failed before, and why).
+here, patterns (DO/DON'T), procedural steps for new features, core files, and
+the project's **invariants** (hard rules, some enforced by custom lints).
 
 Read `.claude/skills/expert/references/*.md` before:
 - adding a feature, debugging unexpected behavior, choosing where new code lives,
@@ -40,20 +40,24 @@ action. The next skill fires when its trigger condition is met.
 | `/implement-mainspec` | `.validated` present, `prds/<f>/run-prd-test.sh` exits non-zero | commits on `feature/<f>` until runner exits 0 |
 | `/fix-local-checks` | `scripts/local-checks.sh` fails post-implement | patch + commit |
 | `/address-feedback` | PR has unresolved reviewer findings (budget enforced externally) | commits for Clear; replies for Ambiguous/Complex/Out-of-Scope |
-| `/learn` | post-merge to main, no `learn/<sha>` on origin | Expert shards + invariants + AGENTS.md pointers + candidate lints; curates lessons.md |
-| `/capture-lesson` | a feature hits terminal STUCK | appends one episodic lesson to `lessons.md` (rolling memory PR) |
+| `/learn` | post-merge to main, no `learn/<sha>` on origin | Expert shards + invariants + AGENTS.md pointers + candidate lints |
 
 **Idempotency rule.** Every skill must be safe to re-invoke on the same disk state.
 Commit all required artifacts *before* writing your sentinel. A crash mid-skill
 leaves the next invocation a clean re-derivation from disk.
 
-## Memory: two shapes, two write-paths
+## Memory: two shapes, one write path
 
 - **AGENTS.md (this file + nested ones) = eager memory.** A map; loaded
   automatically. Keep it pointer-shaped and under the line cap.
 - **The Expert = lazy memory.** The dense knowledge, pulled on demand.
-- `/learn` (post-merge, ground truth) writes both. `/capture-lesson` (on failure)
-  only appends episodic lessons. Both land on reviewable PRs a human merges.
+- `/learn` (post-merge, ground truth) writes both. It is the **only** path that
+  writes memory; it lands on a reviewable PR a human merges.
+- If a feature hits **STUCK** (any step's retry cap), the dispatcher posts the
+  diagnostic to the PR and halts. The **human's first job is the context
+  defect**, not the code — correct the misleading `AGENTS.md` / Expert / spec
+  / PRD on the branch, then fix the code, then merge. `/learn` observes the
+  context correction in the merged diff.
 
 ## Branch lifecycle
 
@@ -63,7 +67,6 @@ leaves the next invocation a clean re-derivation from disk.
     feature/<feature>         ← active implementation lane.
     main                      ← humans merge only. Never push directly.
     learn/<sha>               ← auto-generated post-merge memory PR; humans merge.
-    learn/lessons             ← rolling episodic-lessons PR; humans merge.
 
 ## Non-bypassable verification
 

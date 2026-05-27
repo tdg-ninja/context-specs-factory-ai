@@ -18,8 +18,11 @@ SLUG="$(git config user.email | cut -d@ -f1)"
 WATCH="${WATCH_PATTERN:-prd/${SLUG}/*}"
 WORKTREE_BASE="../$(basename "$PWD")-harness"
 MAX_WORKTREES="${MAX_WORKTREES:-1}"
-IMPLEMENT_CAP="${IMPLEMENT_CAP:-3}"   # PRD-runner retries before STUCK (the plan may be wrong)
-FEEDBACK_CAP="${FEEDBACK_CAP:-5}"     # reviewer feedback rounds before STUCK
+PLANNING_CAP="${PLANNING_CAP:-2}"         # /spec-planning retries before STUCK
+VALIDATE_CAP="${VALIDATE_CAP:-2}"         # /spec-validate retries before STUCK
+IMPLEMENT_CAP="${IMPLEMENT_CAP:-3}"       # PRD-runner retries before STUCK (the plan may be wrong)
+LOCAL_CHECKS_CAP="${LOCAL_CHECKS_CAP:-2}" # local-checks two-strike (auto-fix → focused LLM fix → STUCK)
+FEEDBACK_CAP="${FEEDBACK_CAP:-5}"         # reviewer feedback rounds before STUCK
 mkdir -p .harness
 
 # Load project-local config if present (MAX_WORKTREES, WATCH_PATTERN, ...).
@@ -43,6 +46,80 @@ bootstrap_worktree() {
   if [[ -x scripts/bootstrap-worktree.sh ]]; then
     ./scripts/bootstrap-worktree.sh "$wt" || \
       echo "WARN: bootstrap-worktree.sh failed for ${wt}" >&2
+  fi
+}
+
+# Wrap every claude -p call. Generates a session UUID, runs claude headless with
+# --session-id so the trace at ~/.claude/projects/<encoded>/<uuid>.jsonl is
+# locatable later, and appends a row to .harness/sessions-<feature>.tsv. The TSV
+# is the per-feature audit trail the STUCK signal points the human into.
+run_claude() {
+  local step="$1" feature="$2" attempt="$3"; shift 3
+  local sid; sid="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "noid-$$-$RANDOM")"
+  local log=".harness/sessions-${feature}.tsv"
+  [[ -s "$log" ]] || printf '#timestamp\tstep\tattempt\tsession_id\texit\tduration_s\n' > "$log"
+  local t0; t0="$(date +%s)"
+  # NOTE: --session-id is the documented headless flag; if your claude version
+  # doesn't support it, swap for --output-format json and parse session_id out.
+  claude -p --session-id "$sid" "$@"
+  local exit=$?
+  printf '%s\t%s\t%d\t%s\t%d\t%d\n' \
+    "$(date -Iseconds 2>/dev/null || date)" "$step" "$attempt" "$sid" "$exit" "$(( $(date +%s) - t0 ))" >> "$log"
+  return $exit
+}
+
+# Signal STUCK to the human via the PR. Opens a draft PR if none exists yet
+# (planning/validate can STUCK before any PR is open). Body includes the step,
+# the cap, the per-feature session log (failing step + upstream chain), an
+# optional tail of failing output, and the diagnosis-first checklist. The PR is
+# the single human-facing surface; nothing else is captured to disk for the human.
+signal_stuck() {
+  local feature="$1" step="$2" cap="$3" output_file="${4:-}"
+  touch ".harness/stuck-${feature}"
+  local branch="feature/${feature}"
+  local body=".harness/stuck-body-${feature}.md"
+  {
+    echo "## STUCK — your turn"
+    echo
+    echo "**Step:** \`/${step}\` — cap reached after ${cap} attempts."
+    echo
+    echo "**Sessions** (failing step + upstream chain — open the trace files in"
+    echo "\`~/.claude/projects/<encoded-project>/<session-id>.jsonl\` to see what"
+    echo "the agent saw and concluded; for a CI/server harness, your project should"
+    echo "upload these as workflow artifacts):"
+    echo
+    if [[ -f ".harness/sessions-${feature}.tsv" ]]; then
+      echo '| Time | Step | Attempt | Session ID | Exit |'
+      echo '|------|------|---------|------------|------|'
+      grep -v '^#' ".harness/sessions-${feature}.tsv" 2>/dev/null | tail -n 12 | \
+        awk -F'\t' '{printf "| %s | `%s` | %s | `%s` | %s |\n", $1, $2, $3, $4, $5}'
+      echo
+    fi
+    if [[ -s "$output_file" ]]; then
+      echo "**Last 30 lines of failing output:**"
+      echo
+      echo '```'
+      tail -n 30 "$output_file"
+      echo '```'
+      echo
+    fi
+    echo "## Diagnosis-first (see SETUP.md)"
+    echo
+    echo "Your **first** job is not the code — it is to identify which piece of"
+    echo "context (\`AGENTS.md\`, an Expert shard, a spec, or the PRD) misled the"
+    echo "agent or was missing. Correct it on this branch *before* the code fix;"
+    echo "the merge carries both into main and \`/learn\` picks up the context fix."
+    echo
+    echo "- [ ] **Context defect identified:** \`<file:line>\` — \`<one-line>\`"
+    echo "- [ ] Corrected the context on this branch (AGENTS.md / Expert / spec / PRD)"
+    echo "- [ ] Code fixed; \`./prds/${feature}/run-prd-test.sh\` passes locally"
+    echo "- [ ] Ready to merge"
+  } > "$body"
+  if gh pr view "$branch" >/dev/null 2>&1; then
+    gh pr comment "$branch" --body-file "$body" 2>/dev/null || true
+  else
+    gh pr create --base main --head "$branch" --draft \
+                 --title "STUCK: ${feature} (${step})" --body-file "$body" 2>/dev/null || true
   fi
 }
 
@@ -93,6 +170,11 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
   [[ -d "$wt" ]] || continue
   branch="feature/${feature}"
 
+  # STUCK guard: a cap-hit handed this feature to the human via the PR.
+  # Don't keep poking it — wait for merge/close (cleanup pass clears the
+  # sentinel and the worktree).
+  [[ -f ".harness/stuck-${feature}" ]] && continue
+
   # Invariant 3 guard: worktree HEAD must match the branch we're advancing.
   # Skip otherwise (e.g., human manually checked out a different branch).
   current=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
@@ -106,37 +188,57 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
     && git reset --hard "origin/$branch" --quiet )
 
   # State machine: walk forward by exactly one step. Sentinel files gate each
-  # transition.
+  # transition. Every step has a bounded retry; at cap, signal_stuck posts to the
+  # PR (opening one as a draft if necessary) with the step, the session log, an
+  # optional failing-output tail, and the diagnosis-first checklist. The stuck
+  # sentinel above halts further advance until the human merges or closes.
   if   [[ ! -f "${wt}/specs/${feature}/.planning-done" ]]; then
-       claude -p "/spec-planning ${feature}"      --cwd "${wt}"
+       attempts_file=".harness/planning-attempts-${feature}"
+       attempts=$(cat "${attempts_file}" 2>/dev/null || echo 0)
+       if (( attempts >= PLANNING_CAP )); then
+         echo "STUCK: ${feature} at /spec-planning (${PLANNING_CAP}x)." >&2
+         signal_stuck "$feature" "spec-planning" "$PLANNING_CAP"
+       else
+         echo $((attempts + 1)) > "${attempts_file}"
+         run_claude spec-planning "$feature" $((attempts + 1)) "/spec-planning ${feature}" --cwd "${wt}"
+       fi
 
   elif [[ ! -f "${wt}/specs/${feature}/.validated" ]]; then
-       claude -p "/spec-validate ${feature}"      --cwd "${wt}"
+       attempts_file=".harness/validate-attempts-${feature}"
+       attempts=$(cat "${attempts_file}" 2>/dev/null || echo 0)
+       if (( attempts >= VALIDATE_CAP )); then
+         echo "STUCK: ${feature} at /spec-validate (${VALIDATE_CAP}x)." >&2
+         signal_stuck "$feature" "spec-validate" "$VALIDATE_CAP"
+       else
+         echo $((attempts + 1)) > "${attempts_file}"
+         run_claude spec-validate "$feature" $((attempts + 1)) "/spec-validate ${feature}" --cwd "${wt}"
+       fi
 
   elif ! ( cd "${wt}" && "./prds/${feature}/run-prd-test.sh" ); then
        # Bounded retry: if the PRD runner keeps failing, the *plan* may be broken,
-       # not just the code, and re-invoking implement forever burns compute. Stop
-       # after IMPLEMENT_CAP attempts and flag STUCK (mirrors the local-checks
-       # two-strike breaker). The stuck sentinel also triggers episodic lesson
-       # capture in step 6. (Inv 8)
+       # not just the code, and re-invoking implement forever burns compute. (Inv 8)
        attempts_file=".harness/implement-attempts-${feature}"
        attempts=$(cat "${attempts_file}" 2>/dev/null || echo 0)
        if (( attempts >= IMPLEMENT_CAP )); then
-         echo "STUCK: ${feature} failed the PRD runner ${IMPLEMENT_CAP}x; the plan may be wrong. Human intervention requested." >&2
-         touch ".harness/stuck-${feature}"
+         # Capture the latest failing output for the human's diagnosis dossier.
+         ( cd "${wt}" && ./prds/${feature}/run-prd-test.sh ) > ".harness/stuck-output-${feature}.log" 2>&1 || true
+         echo "STUCK: ${feature} at /implement-mainspec — PRD runner ${IMPLEMENT_CAP}x." >&2
+         signal_stuck "$feature" "implement-mainspec" "$IMPLEMENT_CAP" ".harness/stuck-output-${feature}.log"
        else
          echo $((attempts + 1)) > "${attempts_file}"
-         claude -p "/implement-mainspec ${feature}" --cwd "${wt}"
+         run_claude implement-mainspec "$feature" $((attempts + 1)) "/implement-mainspec ${feature}" --cwd "${wt}"
        fi
 
   elif [[ -x "${wt}/scripts/local-checks.sh" ]] \
        && ! ( cd "${wt}" && ./scripts/local-checks.sh ); then
-       # Optional gate. Two-strike retry: auto-fix, then focused LLM fix. (Inv 8)
+       # Optional gate. Auto-fix first (attempt 0), focused LLM fix (attempt 1),
+       # then STUCK at LOCAL_CHECKS_CAP. (Inv 8)
        attempts_file=".harness/local-check-attempts-${feature}"
        attempts=$(cat "${attempts_file}" 2>/dev/null || echo 0)
-       if (( attempts >= 2 )); then
-         echo "STUCK: ${feature} failed local checks twice; not progressing." >&2
-         touch ".harness/stuck-${feature}"
+       if (( attempts >= LOCAL_CHECKS_CAP )); then
+         ( cd "${wt}" && ./scripts/local-checks.sh ) > ".harness/stuck-output-${feature}.log" 2>&1 || true
+         echo "STUCK: ${feature} at local-checks (${LOCAL_CHECKS_CAP}x)." >&2
+         signal_stuck "$feature" "local-checks" "$LOCAL_CHECKS_CAP" ".harness/stuck-output-${feature}.log"
        elif (( attempts == 0 )); then
          ( cd "${wt}" && ./scripts/local-checks.sh fix || true )
          if ! ( cd "${wt}" && git diff --quiet ); then
@@ -146,12 +248,14 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
          fi
          echo 1 > "${attempts_file}"
        else
-         claude -p "/fix-local-checks ${feature}" --cwd "${wt}"
-         echo 2 > "${attempts_file}"
+         run_claude fix-local-checks "$feature" $((attempts + 1)) "/fix-local-checks ${feature}" --cwd "${wt}"
+         echo $((attempts + 1)) > "${attempts_file}"
        fi
 
   elif ! gh pr view "${branch}" >/dev/null 2>&1; then
        gh pr create --base main --head "${branch}" --fill
+       rm -f ".harness/planning-attempts-${feature}"
+       rm -f ".harness/validate-attempts-${feature}"
        rm -f ".harness/local-check-attempts-${feature}"
        rm -f ".harness/implement-attempts-${feature}"
 
@@ -164,12 +268,12 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
        rounds_file=".harness/feedback-rounds-${feature}"
        rounds=$(cat "${rounds_file}" 2>/dev/null || echo 0)
        if (( rounds >= FEEDBACK_CAP )); then
-         gh pr comment "${branch}" --body \
-           "STUCK: feedback round limit (${FEEDBACK_CAP}) reached. Human intervention requested."
-         touch ".harness/stuck-${feature}"
+         echo "STUCK: ${feature} at PR review (${FEEDBACK_CAP} rounds)." >&2
+         # No tee'd output — the failure signal is the unresolved PR comments.
+         signal_stuck "$feature" "address-feedback" "$FEEDBACK_CAP"
        else
          echo $((rounds + 1)) > "${rounds_file}"
-         claude -p "/address-feedback ${feature}" --cwd "${wt}"
+         run_claude address-feedback "$feature" $((rounds + 1)) "/address-feedback ${feature}" --cwd "${wt}"
        fi
   fi
 done
@@ -184,35 +288,30 @@ for feature in $(git for-each-ref --format='%(refname:lstrip=4)' \
     rm -f ".harness/feedback-rounds-${feature}"
     rm -f ".harness/local-check-attempts-${feature}"
     rm -f ".harness/implement-attempts-${feature}"
+    rm -f ".harness/planning-attempts-${feature}"
+    rm -f ".harness/validate-attempts-${feature}"
     rm -f ".harness/stuck-${feature}"
-    rm -f ".harness/lesson-captured-${feature}"
+    rm -f ".harness/stuck-output-${feature}.log"
+    rm -f ".harness/stuck-body-${feature}.md"
+    rm -f ".harness/sessions-${feature}.tsv"
   fi
 done
 
-# 5. Post-merge memory update — Path A (procedural/semantic, GROUND TRUTH only).
-#    /learn writes Expert shards + invariants + AGENTS.md pointers + candidate
-#    lints, and CURATES lessons.md. Only main (committed code) is ground truth,
-#    so this is the only path allowed to bless/retire memory. ls-remote makes it
-#    idempotent across nodes: first to push learn/<sha> wins; others exit. (Inv 7)
+# 5. Post-merge memory update via /learn. Ground truth only — main is the single
+#    source from which memory is written. /learn reads the merged diff (including
+#    any context corrections the human committed while resolving a STUCK) and
+#    routes facts to: Expert shards, invariants, AGENTS.md pointers, or drafted
+#    lints. ls-remote makes it idempotent across nodes: first to push learn/<sha>
+#    wins; others exit. (Inv 7)
 LAST="$(cat .harness/last-main-sha 2>/dev/null || echo HEAD~50)"
 CUR="$(git rev-parse origin/main)"
 if [[ "${CUR}" != "${LAST}" ]] \
    && ! git ls-remote --exit-code origin "learn/${CUR}" >/dev/null 2>&1; then
-  claude -p "/learn --since ${LAST} --sha ${CUR}"
+  run_claude learn "_main" 1 "/learn --since ${LAST} --sha ${CUR}"
 fi
 echo "${CUR}" > .harness/last-main-sha
 
-# 6. Episodic failure capture — Path B (learn-from-struggle, merge-or-not).
-#    A terminal STUCK (steps 3) drops a .harness/stuck-<f> sentinel. For each,
-#    capture at most one lesson. /capture-lesson judges whether the failure is
-#    generalizable and writes NOTHING for flakes / env / bad-PRD failures. Path B
-#    only APPENDS to lessons.md on a rolling memory PR; Path A (/learn) is the
-#    only thing that curates. Idempotent per feature via the lesson-captured
-#    marker. (CLOSED-unmerged PRs are deliberately NOT a capture trigger.)
-for stuck in .harness/stuck-*; do
-  [[ -e "$stuck" ]] || continue                       # literal glob = no matches
-  feature="${stuck##*/stuck-}"
-  [[ -f ".harness/lesson-captured-${feature}" ]] && continue
-  claude -p "/capture-lesson ${feature}"
-  touch ".harness/lesson-captured-${feature}"
-done
+# STUCK escalation is handled inline in step 3 by signal_stuck (which opens or
+# comments on the PR with the session log + checklist). The human takes over
+# from there — diagnoses the context defect first, corrects it on the branch,
+# fixes the code, then merges. /learn picks up the context correction at merge.

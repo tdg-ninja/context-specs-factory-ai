@@ -47,8 +47,8 @@ Explain these as the "why it's safe" of the script. Each maps to an invariant.
 | step 2 | lazy claim up to capacity | No — atomic rename is the claim lock. |
 | step 3 | advance each feature one step | **This is where you add/remove pipeline steps** — one `elif` per step. |
 | step 4 | cleanup merged/closed PRs | Safe to extend (e.g., notify on cleanup). |
-| step 5 | post-merge `/learn` (Path A — memory, ground truth) | Debounce/idempotency live here. |
-| step 6 | episodic `/capture-lesson` (Path B — learn from STUCK) | Fires per `stuck-<f>` sentinel, once each. |
+| step 5 | post-merge `/learn` (memory update, ground truth only) | Debounce/idempotency live here. |
+| helpers | `run_claude` (session-tagged invocation + TSV log) and `signal_stuck` (PR-body STUCK signal) | Used by every step in §3 that calls `claude -p` or hits a cap. |
 
 ## The bootstrap hook — project-owned worktree provisioning
 
@@ -64,28 +64,47 @@ script, the hook is a no-op.
 Make sure the user knows: this hook is why the per-feature worktrees the harness
 spins up are actually runnable.
 
-## The two memory paths (steps 5 + 6)
+## Memory is single-path; STUCK is the third human-steering point
 
-The dispatcher feeds **two** memory write-paths, both human-merged via PR:
+Memory has **one write path** — `/learn` at step 5, post-merge, ground truth only.
+There is no separate write path for failed features. Instead, **STUCK** (a step in
+§3 hitting its cap) is treated as a first-class escalation: the dispatcher posts
+to the PR (opening it as a draft if needed) with the session log, the failing
+output tail, and a diagnosis-first checklist, then halts the feature. The
+human's first job at STUCK is to identify the **context defect** (which
+`AGENTS.md` / Expert / spec / PRD content misled the agent), correct it on the
+branch, *then* fix the code, *then* merge. Those context corrections ride into
+main with the merge, where `/learn` picks them up and routes any follow-ups.
 
-- **Step 5 — `/learn` (Path A).** Fires once per new `origin/main` sha (idempotent
-  via `git ls-remote origin learn/<sha>`). Writes Expert shards, invariants,
-  AGENTS.md pointers, and candidate lints, and **curates** `lessons.md`. Ground
-  truth only — it never writes from a branch in flight.
-- **Step 6 — `/capture-lesson` (Path B).** A terminal STUCK in step 3 drops a
-  `.harness/stuck-<f>` sentinel; step 6 captures one episodic lesson from the
-  struggle (idempotent via `lesson-captured-<f>`). Path B only *appends*; Path A
-  *curates*. CLOSED-unmerged PRs are deliberately not a capture trigger.
+This is why the design no longer has any "Path B" / `lessons.md` machinery —
+the human's hands-on diagnosis + correction at STUCK is the learning, and the
+merge carries it home.
+
+## The session log + STUCK signal
+
+Two small helpers, both above step 1, do the legwork:
+
+- **`run_claude <step> <feature> <attempt#> "<skill cmd>" --cwd <wt>`** — wraps every
+  `claude -p` call. Generates a UUID session id, runs `claude -p --session-id`,
+  and appends `<timestamp>\t<step>\t<attempt>\t<session_id>\t<exit>\t<duration>`
+  to `.harness/sessions-<feature>.tsv` (gitignored, cleared on merge/close).
+- **`signal_stuck <feature> <step> <cap> [output-file]`** — touches the stuck
+  sentinel, composes a PR body (step, cap, tail of the session log, optional tail
+  of the failing output, diagnosis-first checklist), and either opens a draft PR
+  or comments on an existing one. This is the single human-facing surface.
+
+If your `claude -p` version doesn't support `--session-id`, swap that flag for
+`--output-format json` and parse `session_id` from stdout — `run_claude` is the
+one place to change.
 
 ## Common tweaks to offer
 
 - **Add a pipeline step** (e.g. `/security-review` between validate and
-  implement): insert one `elif` in step 3 with its own sentinel check. Nothing
-  else changes.
-- **STUCK caps** (now built in): `IMPLEMENT_CAP` (default 3) bounds PRD-runner
-  retries before STUCK; `FEEDBACK_CAP` (default 5) bounds reviewer rounds. Both
-  are env-overridable in `.harness/env`. Raise for hard features, lower to fail
-  fast. Hitting either drops a `stuck-<f>` sentinel that feeds step 6.
+  implement): insert one `elif` in step 3 with its own sentinel check, its own
+  `<step>_CAP`, and a `run_claude` / `signal_stuck` pair like the others.
+- **STUCK caps** (all built in): `PLANNING_CAP`, `VALIDATE_CAP`, `IMPLEMENT_CAP`,
+  `LOCAL_CHECKS_CAP`, `FEEDBACK_CAP`. All env-overridable in `.harness/env`.
+  Raise for hard features, lower to fail fast.
 - **Debounce window** for `/learn`: currently fires whenever `origin/main` sha
   changed. A team merging many times per minute may want a time-debounce.
 
