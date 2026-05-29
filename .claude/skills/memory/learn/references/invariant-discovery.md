@@ -20,6 +20,43 @@ Two properties make custom lints the highest-value memory destination:
 2. **It scales the way agents scale.** Once encoded, it applies to every file and
    every future PR at once.
 
+## How to write a good lint
+
+When you draft a lint, the message it prints on failure *is* the memory — it's the
+prompt a future `/fix-local-checks` agent reads cold. Three things make it pull its weight.
+
+**1. The message template.** Fill these in plain language:
+
+- **WHERE** — file:line, or the offending pattern for a whole-repo/graph rule.
+- **WHAT** — the violation as a fact about *this* code, not the rule in the abstract.
+- **WHY** — one clause. Without it the agent satisfies the letter and breaks the intent.
+- **FIX** — the concrete change to make (a short menu if several fixes are valid).
+- **DON'T-CHEAT** — name the silencing trap for this rule.
+
+Bad: `error: layering violation`. Good:
+
+```
+❌ repo/user.ts:12 imports from service/ (layer direction Types→Repo→Service→UI).
+   WHY: layers compile bottom-up; a repo→service edge breaks build order.
+   FIX: move the shared type to types/, or invert via a Provider interface.
+   Don't silence with a path alias — that hides the same edge.
+```
+
+**2. Decide the fix path** — it maps onto the dispatcher's two-strike local-checks gate:
+
+- **Autofixable + safe** (unique, semantics-preserving) → wire into
+  `local-checks.sh fix`; the agent never spends a token on it.
+- **Needs judgment** (several valid fixes, or the choice is semantic) → no autofix;
+  the message must carry enough for `/fix-local-checks` to choose well.
+- **Detect-only** (no mechanical fix) → still ship it; expect `/fix-local-checks`,
+  or STUCK.
+
+**3. Make it discriminating (match-as-proxy).** The lint's match is a *proxy* for the
+problem, not the problem itself. Design it so the cheap way to satisfy it is also the
+*right* way; if deletion or suppression would satisfy it, it's gameable — add a
+companion guard (e.g. skip-detection guards test *removal*, which a plain "tests pass"
+check would reward).
+
 ## Examples of lint-able invariants
 
 - **Layer dependency direction** — "files under `repo/` may not import from

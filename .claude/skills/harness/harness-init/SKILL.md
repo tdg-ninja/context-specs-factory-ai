@@ -113,19 +113,32 @@ though the Expert is empty until their first merge.
 
 ### Step 5 — `scripts/local-checks.sh` (optional, Software 3.0)
 
-Optional lint/format/typecheck/test gate the dispatcher runs before opening a
-PR (two-strike retry, see the dispatcher). Using `references/project-discovery.md`,
-detect the project's actual commands and generate a script that runs them, plus
-a `fix` subcommand (`./scripts/local-checks.sh fix`) for auto-fixable issues.
-Prefer commands the project already defines (its `package.json`/`Makefile`
-scripts) over generic ones. If the project already has pre-commit hooks, call
-them rather than duplicating. If the user doesn't want this gate, skip it — the
-dispatcher treats the script as absent and works fine.
+The deterministic gate the dispatcher runs before opening a PR (two-strike retry:
+`local-checks.sh fix` → `/fix-local-checks` → STUCK). It's the cheapest place to
+catch correctness issues — left of the reviewer and CI. **Read
+`references/local-checks-design.md` first** and narrate the *why* to the user; they
+own and tune this script. Detect commands via `references/project-discovery.md`.
 
-If you generate `local-checks.sh`, also wire in the AGENTS.md freshness lint
-(`check-agents-md.sh`, shipped with the `/learn` skill) so a stale memory pointer
-fails the build. As features merge, `/learn` will add more custom invariant lints
-under `scripts/lints/`; have `local-checks.sh` run everything in that directory.
+It has two responsibilities (the reference details both):
+
+- **Wire the project's deterministic checks** — lint/format (with a `fix`
+  subcommand), typecheck, the **fast** unit suite (slow/integration → CI), a
+  **skip-detection** check, everything in `scripts/lints/`, and the AGENTS.md
+  freshness lint (`check-agents-md.sh`, shipped with `/learn`). Prefer commands the
+  project already defines; call existing pre-commit hooks rather than duplicating.
+- **Propose custom correctness lints** from the codebase as-is (snapshot discovery)
+  — observed existing invariants + surface-scoped best-practice lints, behind the
+  five guards in the reference. **Propose; the user disposes.**
+
+The gate proves **correctness, not coverage** — block only correctness/structural,
+*warn* on legibility/observability, and don't add checks for volume (mutation
+testing is a sensor, not here). The **skip rule** is load-bearing: an agent may
+never add a test-skip marker; a legitimate skip is the human's call at STUCK.
+
+If the user doesn't want this gate, skip it — the dispatcher treats the script as
+absent and works fine. **If you do generate it,** mind the Step 6 dependency:
+because it runs typecheck and tests, the worktree must be fully runnable, so
+`bootstrap-worktree.sh` has to be solid or these legs fail for the wrong reason.
 
 ### Step 6 — `scripts/bootstrap-worktree.sh` (Software 3.0)
 

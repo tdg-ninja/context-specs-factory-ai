@@ -78,4 +78,9 @@ Four layers gate "done." All four must pass; none can be talked past.
 4. **PRD runner** — `./prds/<feature>/run-prd-test.sh` must exit 0 before merge.
    This is the definition of done.
 
+**Silencing a check is bypassing it.** Suppression directives (`@ts-ignore`,
+`eslint-disable`, `as`/`!`, …), weakened configs, and skipped tests (`.skip`,
+`xfail`, …) may only be added by a human, deliberately, on the branch — never by an
+agent. An agent that can't pass a check honestly lets it reach STUCK.
+
 Anything bypassing these layers is a bug, not a feature.
