@@ -48,8 +48,10 @@ can be added later with one workflow file and no other changes.
   new nits and post Important findings only. This is the primary convergence
   mechanism; the round counter is just the safety net.
 - **The responder** — `/address-feedback` triages each comment into Clear /
-  Ambiguous / Complex / Out-of-PRD-Scope. Only Clear-bucket comments burn the
-  round counter. The dispatcher enforces the cap, not the agent.
+  Ambiguous / Complex / Out-of-PRD-Scope. The dispatcher increments the round
+  counter before *every* invocation regardless of bucket, so a reply-only stall
+  marches to STUCK — the correct escalation, since only a push converges a PR.
+  The dispatcher enforces the cap, not the agent.
 - **The reviewer is non-conversational.** It posts findings; the implementer
   signals back via commits, not comment replies. Comment threads are
   human↔human.
