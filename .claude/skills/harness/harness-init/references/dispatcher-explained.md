@@ -19,7 +19,10 @@ Explain these as the "why it's safe" of the script. Each maps to an invariant.
    the *next* `elif` fires. Forward, one step at a time. (Inv 5)
 2. **Artifacts are the only state.** A sentinel existing IS that phase being
    done. No checkpoint file. Crash recovery is free — next tick re-derives from
-   disk. (Inv 1 + 4)
+   disk. (Inv 1 + 4) Most sentinels are written by the skills; `specs/<f>/.prd-passed`
+   is the exception — the *dispatcher* commits+pushes it the first time
+   `run-prd-test.sh` exits 0, so a runner that shells out to an LLM-as-judge runs
+   once instead of every tick (and can't non-deterministically re-kick implement).
 3. **Wipe + HEAD-check before every advance.** `git reset --hard && git clean
    -fd` discards a crashed skill's uncommitted mess; the HEAD guard skips any
    worktree whose branch doesn't match the feature being advanced, so a

@@ -23,7 +23,7 @@ Implements all slices from a mainspec in dependency order. Auto-detects **sequen
 - Per-slice PRs merged into `feature/<feature>` with `gh pr merge --merge` (preserves slice commits + a merge commit).
 - All implementation code committed and pushed on `feature/<feature>`.
 
-**No sentinel.** The dispatcher's success signal for this step is `./prds/<feature>/run-prd-test.sh` exits 0, verified externally. The PRD test is encoded into a slice's Signal by spec-planning, so completing all slices implies the PRD test passes. We do not write a sentinel file.
+**No sentinel.** The dispatcher's success signal for this step is `./prds/<feature>/run-prd-test.sh` exits 0, verified externally. The PRD test is encoded into a slice's Signal by spec-planning, so completing all slices implies the PRD test passes. We do not write a sentinel file — the *dispatcher* records the green result in `specs/<feature>/.prd-passed` once the runner first exits 0 (so a possibly-LLM-judge runner isn't re-run every tick); this skill neither writes nor reads that file.
 
 **Idempotency:**
 - On every invocation, inspect `feature/<feature>` git history. Determine which slices are already merged (look for merge commits like `Merge slice/<n>-<name>` or branches whose commits match slice scope).

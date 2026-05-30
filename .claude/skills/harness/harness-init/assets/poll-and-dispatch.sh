@@ -236,19 +236,39 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
          run_claude spec-validate "$feature" $((attempts + 1)) "$wt" "/spec-validate ${feature}"
        fi
 
-  elif ! ( cd "${wt}" && "./prds/${feature}/run-prd-test.sh" ); then
-       # Bounded retry: if the PRD runner keeps failing, the *plan* may be broken,
-       # not just the code, and re-invoking implement forever burns compute. (Inv 8)
-       attempts_file=".harness/implement-attempts-${feature}"
-       attempts=$(cat "${attempts_file}" 2>/dev/null || echo 0)
-       if (( attempts >= IMPLEMENT_CAP )); then
-         # Capture the latest failing output for the human's diagnosis dossier.
-         ( cd "${wt}" && ./prds/${feature}/run-prd-test.sh ) > ".harness/stuck-output-${feature}.log" 2>&1 || true
-         echo "STUCK: ${feature} at /implement-mainspec — PRD runner ${IMPLEMENT_CAP}x." >&2
-         signal_stuck "$feature" "implement-mainspec" "$IMPLEMENT_CAP" ".harness/stuck-output-${feature}.log"
+  elif [[ ! -f "${wt}/specs/${feature}/.prd-passed" ]]; then
+       # Run the PRD runner only until it first goes green, then cache the result.
+       # The runner may be an LLM-as-judge (cost + non-determinism), so re-running
+       # it every tick would burn tokens and could flip 0->1 and wrongly re-kick
+       # implement on an already-PR'd feature. Forward-only (Inv 9): once green, the
+       # PRD gate stays satisfied; local-checks (re-run every tick), CI, the
+       # PRD-aware reviewer, and the human merge cover any later regression. The
+       # gate still ran and passed before merge, so this is not an Inv 8 bypass.
+       if ( cd "${wt}" && "./prds/${feature}/run-prd-test.sh" ); then
+         # First green — record a committed+pushed sentinel so it survives the
+         # tick-start wipe and is never re-run. The dispatcher (not the skill)
+         # writes it because only the dispatcher's gate observed green. `|| true`:
+         # a push failure self-heals (next wipe drops the un-pushed commit -> the
+         # sentinel is absent -> re-run) and must not abort the tick.
+         ( cd "${wt}" \
+           && touch "specs/${feature}/.prd-passed" \
+           && git add "specs/${feature}/.prd-passed" \
+           && git commit -m "harness: PRD runner green for ${feature}" --quiet \
+           && git push --quiet ) || true
        else
-         echo $((attempts + 1)) > "${attempts_file}"
-         run_claude implement-mainspec "$feature" $((attempts + 1)) "$wt" "/implement-mainspec ${feature}"
+         # Bounded retry: if the PRD runner keeps failing, the *plan* may be broken,
+         # not just the code, and re-invoking implement forever burns compute. (Inv 8)
+         attempts_file=".harness/implement-attempts-${feature}"
+         attempts=$(cat "${attempts_file}" 2>/dev/null || echo 0)
+         if (( attempts >= IMPLEMENT_CAP )); then
+           # Capture the latest failing output for the human's diagnosis dossier.
+           ( cd "${wt}" && ./prds/${feature}/run-prd-test.sh ) > ".harness/stuck-output-${feature}.log" 2>&1 || true
+           echo "STUCK: ${feature} at /implement-mainspec — PRD runner ${IMPLEMENT_CAP}x." >&2
+           signal_stuck "$feature" "implement-mainspec" "$IMPLEMENT_CAP" ".harness/stuck-output-${feature}.log"
+         else
+           echo $((attempts + 1)) > "${attempts_file}"
+           run_claude implement-mainspec "$feature" $((attempts + 1)) "$wt" "/implement-mainspec ${feature}"
+         fi
        fi
 
   elif [[ -x "${wt}/scripts/local-checks.sh" ]] \

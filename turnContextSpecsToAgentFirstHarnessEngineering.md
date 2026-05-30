@@ -479,15 +479,28 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
          run_claude spec-validate "$feature" $((attempts + 1)) "$wt" "/spec-validate ${feature}"
        fi
 
-  elif ! ( cd "${wt}" && "./prds/${feature}/run-prd-test.sh" ); then
-       attempts_file=".harness/implement-attempts-${feature}"
-       attempts=$(cat "${attempts_file}" 2>/dev/null || echo 0)
-       if (( attempts >= IMPLEMENT_CAP )); then
-         ( cd "${wt}" && ./prds/${feature}/run-prd-test.sh ) > ".harness/stuck-output-${feature}.log" 2>&1 || true
-         signal_stuck "$feature" "implement-mainspec" "$IMPLEMENT_CAP" ".harness/stuck-output-${feature}.log"
+  elif [[ ! -f "${wt}/specs/${feature}/.prd-passed" ]]; then
+       # Run the PRD runner only until first green, then cache it: the runner may
+       # be an LLM-as-judge (cost + non-determinism), so re-running every tick would
+       # burn tokens and could flip 0->1 and wrongly re-kick implement. Forward-only
+       # (Inv 9); the gate still ran and passed, so this is not an Inv 8 bypass.
+       if ( cd "${wt}" && "./prds/${feature}/run-prd-test.sh" ); then
+         # Dispatcher records the green (only it observed the gate). Committed +
+         # pushed so it survives the wipe; `|| true` self-heals on push failure.
+         ( cd "${wt}" && touch "specs/${feature}/.prd-passed" \
+           && git add "specs/${feature}/.prd-passed" \
+           && git commit -m "harness: PRD runner green for ${feature}" --quiet \
+           && git push --quiet ) || true
        else
-         echo $((attempts + 1)) > "${attempts_file}"
-         run_claude implement-mainspec "$feature" $((attempts + 1)) "$wt" "/implement-mainspec ${feature}"
+         attempts_file=".harness/implement-attempts-${feature}"
+         attempts=$(cat "${attempts_file}" 2>/dev/null || echo 0)
+         if (( attempts >= IMPLEMENT_CAP )); then
+           ( cd "${wt}" && ./prds/${feature}/run-prd-test.sh ) > ".harness/stuck-output-${feature}.log" 2>&1 || true
+           signal_stuck "$feature" "implement-mainspec" "$IMPLEMENT_CAP" ".harness/stuck-output-${feature}.log"
+         else
+           echo $((attempts + 1)) > "${attempts_file}"
+           run_claude implement-mainspec "$feature" $((attempts + 1)) "$wt" "/implement-mainspec ${feature}"
+         fi
        fi
 
   elif [[ -x "${wt}/scripts/local-checks.sh" ]] \
@@ -573,7 +586,7 @@ Seven load-bearing properties (each one is the dispatcher's concrete realization
 2. **Artifacts are the only state.** No in-memory state, no checkpoint files describing "what step we're on." A sentinel file existing IS that phase being done. Crash recovery is free — the next tick re-derives state from disk. → Invariants 1 + 4.
 3. **The working tree is wiped *and* HEAD-checked at the start of every per-feature advance.** `git reset --hard && git clean -fd` throws away anything a crashed skill left uncommitted; the HEAD guard skips any worktree whose current branch doesn't match the feature being advanced (so a manually-checked-out branch can never be silently clobbered). Wipes run on per-feature worktrees, never on the human's checkout. → Invariants 3 + 6.
 4. **The dispatcher never invokes an LLM directly.** It only spawns `claude -p` subprocesses or shells out to `gh`/`git`. Each subprocess is a fresh OS process, a fresh model session, a clean context window. `run_claude` `cd`s the subprocess into the feature worktree before launching (there is no print-mode `--cwd` flag, and the `cd` is also what gives the skill its `.claude/` command + `AGENTS.md` discovery; the `learn` subprocess runs at the repo root on `main`). A skill's non-zero exit is recorded but never aborts the tick — the absent sentinel makes the next tick retry. `[[clean-state-handoff]]` made concrete. → Invariant 5.
-5. **Every gate is bounded — no infinite loops.** Three circuit breakers, all deterministic: the PRD-runner gate stops after `IMPLEMENT_CAP` attempts (the plan may be broken, not the code); `local-checks.sh` uses a two-strike retry (auto-fix, then focused LLM fix); the feedback loop stops after `FEEDBACK_CAP` rounds. Each terminal STUCK drops a `.harness/stuck-<f>` sentinel and halts that feature. Projects without `local-checks.sh` skip that gate entirely. → Invariant 8.
+5. **Every gate is bounded — no infinite loops.** Three circuit breakers, all deterministic: the PRD-runner gate stops after `IMPLEMENT_CAP` attempts (the plan may be broken, not the code); `local-checks.sh` uses a two-strike retry (auto-fix, then focused LLM fix); the feedback loop stops after `FEEDBACK_CAP` rounds. Each terminal STUCK drops a `.harness/stuck-<f>` sentinel and halts that feature. Projects without `local-checks.sh` skip that gate entirely. The first green PRD-runner result is cached in a committed+pushed `specs/<f>/.prd-passed` sentinel, so a runner that shells out to an LLM-as-judge runs **once**, not every tick — the routing stays deterministic and cheap (Inv 5) and a non-deterministic judge can't flip a passed feature back into implement. The gate still ran and passed before merge, so caching it is not an Inv 8 bypass. → Invariants 5 + 8 + 9.
 6. **`MAX_WORKTREES` is the single concurrency knob.** Default `1` = FIFO single-worktree; raise it for bounded parallelism. Claims are **lazy** — PRDs over remaining capacity stay in `prd/<slug>/*` as the visible waiting queue, never prematurely renamed to `feature/<f>`. In-flight work always continues regardless of cap changes (the cap throttles intake, not continuation). Pickup order is FIFO by remote branch committerdate. → Invariants 2 + 3.
 7. **STUCK is the third human-steering point; memory has one write path.** A cap-hit in step 3 calls `signal_stuck`, which opens (or comments on) the PR with the session log, the failing-output tail, and the diagnosis-first checklist — then halts that feature. The human's first job is the context defect, not the code; the merge carries both fixes back. Memory is *only* written by `/learn` at step 5, post-merge, from ground truth. → Invariant 7.
 
@@ -590,7 +603,7 @@ Every skill in the chain has a contract with the dispatcher: *what artifacts mus
 | `/intent` | `prds/<f>/prd.md`, **`prds/<f>/run-prd-test.sh`** (executable; exits 0 when feature done; internals may be deterministic checks, LLM-as-judge, a project-native test, or any mix), any helper artifacts referenced by the runner under `prds/<f>/`, pushed `prd/<author>/<f>` branch | Branch exists in `prd/<author>/*` |
 | `/spec-planning` | `specs/<f>/mainspec.md` + all referenced slices in `specs/<f>/slices/*.md`, committed | `specs/<f>/.planning-done` |
 | `/spec-validate` | In-place edits to `specs/<f>/mainspec.md` and `slices/*.md` for impactful 3/3 + 2/3 findings; `specs/<f>/validation-log.md` audit trail committed | `specs/<f>/.validated` |
-| `/implement-mainspec` | Slice PRs merged into `feature/<f>`, all committed and pushed, PRD runner exits 0 | `./prds/<f>/run-prd-test.sh` exits 0 |
+| `/implement-mainspec` | Slice PRs merged into `feature/<f>`, all committed and pushed, PRD runner exits 0 | `specs/<f>/.prd-passed` — the dispatcher commits+pushes it the first time `./prds/<f>/run-prd-test.sh` exits 0, then never re-runs the (possibly LLM-judge) runner |
 | `scripts/local-checks.sh` *(optional, project-owned)* | Lint/format/typecheck/fast-tests/skip-detection + `scripts/lints/*` pass; supports a `fix` subcommand; custom lints emit remediation-rich messages | Exit 0 (deterministic) |
 | `/fix-local-checks` *(new, focused)* | Cause fixed (never silenced; no skip markers), re-verified, committed | `scripts/local-checks.sh` exits 0 |
 | Final PR | `feature/<f>` PR exists against main | `gh pr view feature/<f>` succeeds (deterministic) |

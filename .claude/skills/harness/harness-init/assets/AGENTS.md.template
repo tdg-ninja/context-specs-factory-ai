@@ -37,7 +37,7 @@ action. The next skill fires when its trigger condition is met.
 | `/intent` | Human initiates | `prds/<f>/{prd.md, run-prd-test.sh}` on `prd/<author>/<f>` |
 | `/spec-planning` | `specs/<f>/.planning-done` absent on `feature/<f>` | mainspec + slices + `.planning-done` |
 | `/spec-validate` | `.planning-done` present, `.validated` absent | in-place spec edits + `.validated` |
-| `/implement-mainspec` | `.validated` present, `prds/<f>/run-prd-test.sh` exits non-zero | commits on `feature/<f>` until runner exits 0 |
+| `/implement-mainspec` | `.validated` present, `specs/<f>/.prd-passed` absent | commits on `feature/<f>` until `run-prd-test.sh` exits 0 (dispatcher then records `.prd-passed`) |
 | `/fix-local-checks` | `scripts/local-checks.sh` fails post-implement | patch + commit |
 | `/address-feedback` | PR has unresolved reviewer findings (budget enforced externally) | commits for Clear; replies for Ambiguous/Complex/Out-of-Scope |
 | `/learn` | post-merge to main, no `learn/<sha>` on origin | Expert shards + invariants + AGENTS.md pointers + candidate lints |
