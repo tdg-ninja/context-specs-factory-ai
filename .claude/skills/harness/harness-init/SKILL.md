@@ -170,8 +170,25 @@ Read `references/reviewer-options.md`. Present the three paths (self-hosted via
 `claude-code-action` = recommended default; managed Code Review; none). Explain
 the tradeoffs and that switching later is cheap (one workflow file). Then:
 - **Self-hosted:** copy `assets/REVIEW.md` to repo root + `assets/workflows/claude-review.yml`
-  to `.github/workflows/`; tell the user to add the `ANTHROPIC_API_KEY` repo
-  secret and to pin the action version.
+  to `.github/workflows/`, and:
+  1. **Pick auth with the user.** The template ships with `claude_code_oauth_token`
+     active and `anthropic_api_key` commented. Ask which they want:
+     **subscription** (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` — uses
+     their Max/Pro plan, shares its usage limits) vs **metered API**
+     (`ANTHROPIC_API_KEY` from console.anthropic.com — separate billing, better for
+     teams/CI). Uncomment the chosen line, comment the other, and have them add the
+     matching repo secret. (Max and the API are separate billing products.)
+  2. **Pin the action.** Look up the current `anthropics/claude-code-action`
+     release (e.g. `gh release view --repo anthropics/claude-code-action`) and
+     replace `@v1` with that tag (e.g. `@v1.2.3`).
+  3. **Tell them the v1 same-content rule:** the workflow must be byte-identical on
+     the PR branch and the default branch, so it only takes effect once merged to
+     `main` and can't be tested from a feature branch.
+  Note the template is the v1 API (`prompt` + `track_progress` + `claude_args` +
+  `id-token: write`); it does NOT use the pre-v1 `mode`/`review_instructions_path`
+  inputs. The reviewer is PR-triggered and one-way; if the user also wants an
+  interactive `@claude` agent, that's the stock `examples/claude.yml` added
+  separately (see reviewer-options.md) — not bundled here.
 - **Managed:** copy `REVIEW.md`; give the GitHub App install instructions.
 - **None:** create nothing; note it's addable later.
 

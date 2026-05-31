@@ -842,12 +842,12 @@ Five load-bearing properties:
 
 Bucket boundaries are judgment calls. The skill's prompt should ground itself in the PRD (`prds/<f>/prd.md`) and the Expert before classifying — the PRD is the authoritative scope; the Expert is the authoritative pattern reference.
 
-**Reviewer choice — self-hosted (default) vs managed.** Both consume the same `REVIEW.md`; both have the same trigger surface (PR open, push, `@claude review`). Migration is one workflow file, no other changes.
+**Reviewer choice — self-hosted (default) vs managed.** Both consume the same `REVIEW.md`. The harness's automated reviewer is **PR-triggered** (open + push) and non-conversational on both. On-demand `@claude` mentions are native to the managed service; for the self-hosted lane they're a *separate, optional* workflow (Anthropic's stock `claude.yml`, which can write code) deliberately kept out of the harness reviewer. Migration between A and B is one workflow file, no other changes.
 
-| Option | Setup | Cost | Best for |
-|---|---|---|---|
-| **Self-hosted via `claude-code-action`** *(recommended default)* | GitHub Actions workflow on your API key | Often well under $1/PR with Haiku for first pass + Expert as the context-narrowing mechanism + prompt caching on stable parts | Most projects |
-| **Anthropic managed Code Review** | Install GitHub App; configure per-repo Review Behavior | ~$15-25/PR; multi-agent parallel review with verification step | Teams that want it turnkey and have the budget |
+| Option | Setup | Auth | Cost | Best for |
+|---|---|---|---|---|
+| **Self-hosted via `claude-code-action`** *(recommended default)* | GitHub Actions workflow (v1 API: `prompt` + `track_progress` + `id-token: write`) | API key **or** Max/Pro subscription token (`claude setup-token`) | Often well under $1/PR with Haiku for first pass + Expert as the context-narrowing mechanism + prompt caching on stable parts | Most projects |
+| **Anthropic managed Code Review** | Install GitHub App; configure per-repo Review Behavior | Managed (GitHub App) | ~$15-25/PR; multi-agent parallel review with verification step | Teams that want it turnkey and have the budget |
 
 The Expert is the cost lever — it's the curated context that lets a smaller-model reviewer skip reading the full codebase. This is where the long-term-memory work pays off.
 
@@ -1417,6 +1417,7 @@ lint must pass against current main before it's wired in.
 
 Items noticed while drafting that we deferred or didn't fully resolve:
 
+- **Reviewer workflow template targeted the pre-v1 action API — resolved.** The shipped `claude-review.yml` used `mode: review` + `review_instructions_path`, which `claude-code-action@v1` silently ignores (→ empty prompt, "agent" mode), and it lacked `permissions: id-token: write` (→ "Could not fetch an OIDC token"). Rewritten for the v1 unified API: `prompt` (pointing at REVIEW.md) + `track_progress: true` + `claude_args`, with `id-token: write` and `checkout@v5`. Two related findings folded in: (1) **auth is not API-key-only** — the template now documents `CLAUDE_CODE_OAUTH_TOKEN` (Claude Max/Pro subscription, via `claude setup-token`) as a first-class alternative to `ANTHROPIC_API_KEY` (metered), and `harness-init` Step 7 has the user pick; (2) **v1 same-content rule** — the workflow file must be byte-identical on the PR branch and the default branch, so reviewer edits only take effect once merged to `main` (can't be tested from a feature branch). The harness reviewer stays **PR-triggered + non-conversational**; on-demand `@claude` mentions are managed-native or a separate, optional stock `claude.yml` the user can add — deliberately not bundled. Verified live via a throwaway smoke-test PR. Owner: Rico.
 - **Linter recommendations for greenfield projects — resolved.** `harness-init` Step 5 now does *snapshot lint discovery*: it proposes custom correctness lints from the codebase as-is (observed invariants + surface-scoped best practice), behind five guards, propose-not-apply (see `harness-init/references/local-checks-design.md`). Flips the old default from hands-off to propose-strictly-filtered ([[harnessability]]'s cheapest uplift). `/learn` continues the *stream* (per-merge) version. The strict correctness filter + must-pass-current-main keep this from becoming volume.
 - **Debounce window tuning.** 5 minutes is a reasonable starting point. Some projects merge hourly; some merge several times per minute. Make it a config knob, not a constant.
 - **Expert drift detection.** If `/learn` keeps returning 0/3 for many merges, is the Expert too coarse to capture changes, or is the project stable? Worth an observability hook (`consensus.md` flags this).
