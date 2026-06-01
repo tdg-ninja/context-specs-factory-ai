@@ -31,6 +31,14 @@ VALIDATE_CAP="${VALIDATE_CAP:-2}"         # /spec-validate retries before STUCK
 IMPLEMENT_CAP="${IMPLEMENT_CAP:-3}"       # PRD-runner retries before STUCK (the plan may be wrong)
 LOCAL_CHECKS_CAP="${LOCAL_CHECKS_CAP:-2}" # local-checks two-strike (auto-fix → focused LLM fix → STUCK)
 FEEDBACK_CAP="${FEEDBACK_CAP:-5}"         # reviewer feedback rounds before STUCK
+# Convergence signal (Flow 2.7). When the reviewer has no Important findings left,
+# REVIEW.md tells it to post a PR comment containing this marker. The dispatcher
+# sees the marker and hands the PR to the human for /evaluate-pr. Uniform across
+# reviewers (managed or self-hosted) — both can post a comment. If the reviewer
+# never emits it, the feedback loop just runs to FEEDBACK_CAP and STUCKs (a clean
+# PR the human merges) — acceptable degradation, no special case. Set the marker
+# to EMPTY in .harness/env when there is no reviewer (converge at PR-open instead).
+REVIEW_CLEAN_MARKER="${REVIEW_CLEAN_MARKER:-HARNESS_REVIEW_CLEAN}"
 mkdir -p .harness
 
 # Headless permission posture for `claude -p`. A headless session cannot show a
@@ -98,6 +106,43 @@ run_claude() {
   return 0
 }
 
+# Render the per-feature session table (the full claude -p build trail) as a
+# Markdown table on stdout. Shared by signal_stuck and signal_human_review so the
+# session IDs are surfaced on the PR in BOTH the failure (STUCK) and the healthy
+# (HUMAN_REVIEW) terminal states — the substrate a later /evaluate-sessions reads.
+render_sessions_table() {
+  local feature="$1"
+  [[ -f ".harness/sessions-${feature}.tsv" ]] || return 0
+  echo '| Time | Step | Attempt | Session ID | Exit |'
+  echo '|------|------|---------|------------|------|'
+  grep -v '^#' ".harness/sessions-${feature}.tsv" 2>/dev/null | tail -n 20 | \
+    awk -F'\t' '{printf "| %s | `%s` | %s | `%s` | %s |\n", $1, $2, $3, $4, $5}'
+}
+
+# Convergence handoff (Flow 2.7): the reviewer reported no Important findings, so
+# the PR is the human's to evaluate. Post the session trail with an invitational
+# framing (NOT a failure — this is the healthy terminal state of the review loop).
+# Deterministic and once (the human-review-posted-<f> marker prevents re-posting).
+signal_human_review() {
+  local feature="$1" branch="feature/${feature}"
+  local body=".harness/human-review-body-${feature}.md"
+  {
+    echo "## Ready for your review"
+    echo
+    echo "The reviewer reports no outstanding Important findings. This PR is now"
+    echo "yours to **evaluate** — run \`/evaluate-pr ${feature}\` to walk the change,"
+    echo "run it locally, and build a firm understanding before you merge."
+    echo
+    echo "**Build sessions** (the full \`claude -p\` trail — open a trace at"
+    echo "\`~/.claude/projects/<encoded>/<session-id>.jsonl\` to see what each agent"
+    echo "saw and concluded; useful if you decide *not* to merge and want to find"
+    echo "which context shaped a decision):"
+    echo
+    render_sessions_table "$feature"
+  } > "$body"
+  gh pr comment "$branch" --body-file "$body" 2>/dev/null || true
+}
+
 # Signal STUCK to the human via the PR. Opens a draft PR if none exists yet
 # (planning/validate can STUCK before any PR is open). Body includes the step,
 # the cap, the per-feature session log (failing step + upstream chain), an
@@ -119,10 +164,7 @@ signal_stuck() {
     echo "upload these as workflow artifacts):"
     echo
     if [[ -f ".harness/sessions-${feature}.tsv" ]]; then
-      echo '| Time | Step | Attempt | Session ID | Exit |'
-      echo '|------|------|---------|------------|------|'
-      grep -v '^#' ".harness/sessions-${feature}.tsv" 2>/dev/null | tail -n 12 | \
-        awk -F'\t' '{printf "| %s | `%s` | %s | `%s` | %s |\n", $1, $2, $3, $4, $5}'
+      render_sessions_table "$feature"
       echo
     fi
     if [[ -s "$output_file" ]]; then
@@ -151,6 +193,20 @@ signal_stuck() {
     gh pr create --base main --head "$branch" --draft \
                  --title "STUCK: ${feature} (${step})" --body-file "$body" 2>/dev/null || true
   fi
+}
+
+# Has the reviewer signalled "done"? True iff any PR comment contains the marker.
+# Dead simple on purpose: see the marker, converge. We don't check freshness — if
+# a later push lands after the marker, it came from the human (the loop is halted
+# in HUMAN_REVIEW by then), and the human handles whatever the reviewer says about
+# it. Deterministic, one gh call, no LLM. Empty marker = no reviewer (handled at
+# PR-open), so this returns false.
+reviewer_converged() {
+  local branch="$1"
+  [[ -n "$REVIEW_CLEAN_MARKER" ]] || return 1
+  gh pr view "$branch" --json comments \
+    --jq --arg m "$REVIEW_CLEAN_MARKER" '[.comments[]?|select(.body|contains($m))]|length>0' \
+    2>/dev/null | grep -q true
 }
 
 git fetch --quiet origin
@@ -204,6 +260,19 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
   # Don't keep poking it — wait for merge/close (cleanup pass clears the
   # sentinel and the worktree).
   [[ -f ".harness/stuck-${feature}" ]] && continue
+
+  # HUMAN_REVIEW guard (Flow 2.7): the reviewer converged and the PR was handed
+  # to the human for /evaluate-pr. Halt — no advance — until the human merges or
+  # closes (cleanup clears the sentinels + worktree). The human drives from here:
+  # evaluate, then merge, close, or fix locally and push. The loop never re-engages.
+  # Post the session trail exactly once (guarded by the -posted marker).
+  if [[ -f ".harness/human-review-${feature}" ]]; then
+    if [[ ! -f ".harness/human-review-posted-${feature}" ]]; then
+      signal_human_review "$feature"
+      touch ".harness/human-review-posted-${feature}"
+    fi
+    continue
+  fi
 
   # Invariant 3 guard: worktree HEAD must match the branch we're advancing.
   # Skip otherwise (e.g., human manually checked out a different branch).
@@ -308,10 +377,20 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
        rm -f ".harness/validate-attempts-${feature}"
        rm -f ".harness/local-check-attempts-${feature}"
        rm -f ".harness/implement-attempts-${feature}"
+       # No reviewer configured (empty marker) → nothing to converge on; hand
+       # straight to the human for /evaluate-pr (Flow 2.7). Guard halts next tick.
+       [[ -z "$REVIEW_CLEAN_MARKER" ]] && touch ".harness/human-review-${feature}"
 
-  # PR exists. Address reviewer findings if budget remains. Counter at
-  # .harness/feedback-rounds-<f> persists for the entire PR lifetime; no reset
-  # on human pushes.
+  # CONVERGED — the reviewer posted the clean marker. Hand the PR to the human
+  # for /evaluate-pr (Flow 2.7). The guard above halts the feature next tick.
+  # Checked BEFORE the findings loop so a clean PR never marches to a false STUCK
+  # on a sticky historical COMMENTED review.
+  elif reviewer_converged "${branch}"; then
+       touch ".harness/human-review-${feature}"
+
+  # Reviewer has findings and hasn't signalled done. Address them if budget
+  # remains; at FEEDBACK_CAP rounds without convergence, STUCK (covers genuine
+  # non-convergence AND a reviewer that flubbed the marker — human takes over).
   elif gh pr view "${branch}" --json reviews \
          --jq '.reviews[] | select(.state=="CHANGES_REQUESTED" or .state=="COMMENTED")' \
          2>/dev/null | grep -q .; then
@@ -343,6 +422,9 @@ for feature in $(git for-each-ref --format='%(refname:lstrip=4)' \
     rm -f ".harness/stuck-${feature}"
     rm -f ".harness/stuck-output-${feature}.log"
     rm -f ".harness/stuck-body-${feature}.md"
+    rm -f ".harness/human-review-${feature}"
+    rm -f ".harness/human-review-posted-${feature}"
+    rm -f ".harness/human-review-body-${feature}.md"
     rm -f ".harness/sessions-${feature}.tsv"
   fi
 done

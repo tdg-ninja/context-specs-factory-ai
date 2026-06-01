@@ -15,7 +15,7 @@ Context Specs ships as a library of agent skills for spec-driven development (`/
 - A **branch convention** (`prd/<feature>`) that any harness can watch as its queue.
 - An **AGENTS.md** entry contract (vendor-neutral, open) that makes the design portable across harnesses.
 
-The result is an agent-first workflow where humans steer at **three** points — confirming a PRD, merging a PR, and (when needed) unsticking a STUCK feature — and the system gets better on every merge because memory grows from ground truth alone.
+The result is an agent-first workflow where humans steer at **three** points — confirming a PRD (**Intent**), evaluating-then-merging a PR (**Evaluate**, via `/evaluate-pr`), and (when needed) unsticking a STUCK feature. Those three are where the **[Human Loop](#the-human-loop)** (Understanding → Intent → Evaluate, a closed cycle) touches the machine. The system gets better on every merge because memory grows from ground truth alone.
 
 ```mermaid
 flowchart LR
@@ -306,6 +306,10 @@ VALIDATE_CAP="${VALIDATE_CAP:-2}"         # /spec-validate retries before STUCK
 IMPLEMENT_CAP="${IMPLEMENT_CAP:-3}"       # PRD-runner retries before STUCK (the plan may be wrong)
 LOCAL_CHECKS_CAP="${LOCAL_CHECKS_CAP:-2}" # local-checks two-strike (auto-fix → focused LLM fix → STUCK)
 FEEDBACK_CAP="${FEEDBACK_CAP:-5}"         # reviewer feedback rounds before STUCK
+# Convergence marker (Flow 2.7): when the reviewer has no Important findings left,
+# REVIEW.md tells it to post a PR comment containing this string; the dispatcher
+# sees it and hands the PR to the human. Empty = no reviewer (converge at PR-open).
+REVIEW_CLEAN_MARKER="${REVIEW_CLEAN_MARKER:-HARNESS_REVIEW_CLEAN}"
 mkdir -p .harness
 
 # Headless permission posture for `claude -p`. A headless session can't show a
@@ -366,6 +370,49 @@ run_claude() {
   return 0
 }
 
+# Render the per-feature session table (the full claude -p build trail) as a
+# Markdown table on stdout. Shared by signal_stuck and signal_human_review so the
+# session IDs are surfaced on the PR in BOTH the failure (STUCK) and the healthy
+# (HUMAN_REVIEW) terminal states — the substrate a later /evaluate-sessions reads.
+render_sessions_table() {
+  local feature="$1"
+  [[ -f ".harness/sessions-${feature}.tsv" ]] || return 0
+  echo '| Time | Step | Attempt | Session ID | Exit |'
+  echo '|------|------|---------|------------|------|'
+  grep -v '^#' ".harness/sessions-${feature}.tsv" 2>/dev/null | tail -n 20 | \
+    awk -F'\t' '{printf "| %s | `%s` | %s | `%s` | %s |\n", $1, $2, $3, $4, $5}'
+}
+
+# Convergence handoff: the automated review loop has nothing left to do — the bot
+# reviewer has no outstanding Important findings. Post the full session trail and
+# hand the PR to the human for /evaluate-pr. Unlike STUCK this is NOT a failure:
+# it is the healthy terminal state the feedback loop was always missing (today the
+# loop has only "keep churning" and "STUCK at cap" exits — see Flow 2.7). The
+# session IDs let the human inspect how the change was built and, if they decide
+# NOT to merge, trace which context (PRD / spec / skill / memory) shaped a
+# decision they disagree with. Posting is deterministic + once (guarded by the
+# human-review-posted-<f> marker). Convergence itself is detected by the
+# dispatcher (reviewer_converged below), not the responder.
+signal_human_review() {
+  local feature="$1" branch="feature/${feature}"
+  local body=".harness/human-review-body-${feature}.md"
+  {
+    echo "## Ready for your review"
+    echo
+    echo "The reviewer reports no outstanding Important findings. This PR is now"
+    echo "yours to **evaluate**: run \`/evaluate-pr ${feature}\` to walk the change,"
+    echo "run it locally, and build a firm understanding before you merge."
+    echo
+    echo "**Build sessions** (the full \`claude -p\` trail — open a trace at"
+    echo "\`~/.claude/projects/<encoded>/<session-id>.jsonl\` to see what each agent"
+    echo "saw and concluded; useful if you decide *not* to merge and want to find"
+    echo "which context shaped a decision):"
+    echo
+    render_sessions_table "$feature"
+  } > "$body"
+  gh pr comment "$branch" --body-file "$body" 2>/dev/null || true
+}
+
 # Signal STUCK to the human via the PR. Opens a draft PR if none exists yet
 # (planning/validate can STUCK before any PR is open). Body includes the step,
 # the cap, the per-feature session log (failing step + upstream chain), an
@@ -387,10 +434,7 @@ signal_stuck() {
     echo "upload these as workflow artifacts):"
     echo
     if [[ -f ".harness/sessions-${feature}.tsv" ]]; then
-      echo '| Time | Step | Attempt | Session ID | Exit |'
-      echo '|------|------|---------|------------|------|'
-      grep -v '^#' ".harness/sessions-${feature}.tsv" 2>/dev/null | tail -n 12 | \
-        awk -F'\t' '{printf "| %s | `%s` | %s | `%s` | %s |\n", $1, $2, $3, $4, $5}'
+      render_sessions_table "$feature"
       echo
     fi
     if [[ -s "$output_file" ]]; then
@@ -419,6 +463,19 @@ signal_stuck() {
     gh pr create --base main --head "$branch" --draft \
                  --title "STUCK: ${feature} (${step})" --body-file "$body" 2>/dev/null || true
   fi
+}
+
+# Has the reviewer signalled "done"? True iff any PR comment contains the marker.
+# Dead simple on purpose: see the marker, converge — no freshness/author checks. A
+# later push (after the marker) comes from the human, who is already driving in
+# HUMAN_REVIEW. If the reviewer never emits the marker, the feedback cap STUCKs the
+# PR (a clean PR the human merges). Empty marker = no reviewer → false here.
+reviewer_converged() {
+  local branch="$1"
+  [[ -n "$REVIEW_CLEAN_MARKER" ]] || return 1
+  gh pr view "$branch" --json comments \
+    --jq --arg m "$REVIEW_CLEAN_MARKER" '[.comments[]?|select(.body|contains($m))]|length>0' \
+    2>/dev/null | grep -q true
 }
 
 git fetch --quiet origin
@@ -464,6 +521,19 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
   # Don't keep poking it — wait for merge/close (cleanup pass clears the
   # sentinel and the worktree).
   [[ -f ".harness/stuck-${feature}" ]] && continue
+
+  # HUMAN_REVIEW guard (Flow 2.7): the dispatcher wrote human-review-<f> when the
+  # reviewer signalled done. Halt — no advance — until the human merges or closes
+  # (cleanup clears the sentinels + worktree). The human drives from here: evaluate,
+  # then merge, close, or fix locally and push. The loop never re-engages. Post the
+  # session trail exactly once (guarded by the -posted marker).
+  if [[ -f ".harness/human-review-${feature}" ]]; then
+    if [[ ! -f ".harness/human-review-posted-${feature}" ]]; then
+      signal_human_review "$feature"
+      touch ".harness/human-review-posted-${feature}"
+    fi
+    continue
+  fi
 
   # Invariant 3 guard: worktree HEAD must match the branch we're advancing.
   current=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
@@ -546,7 +616,18 @@ for feature in ${in_flight[@]+"${in_flight[@]}"}; do
        gh pr create --base main --head "${branch}" --fill
        rm -f ".harness/planning-attempts-${feature}" ".harness/validate-attempts-${feature}" \
              ".harness/local-check-attempts-${feature}" ".harness/implement-attempts-${feature}"
+       # No reviewer configured (empty marker) → converge at PR-open (Flow 2.7).
+       [[ -z "$REVIEW_CLEAN_MARKER" ]] && touch ".harness/human-review-${feature}"
 
+  # CONVERGED — the reviewer posted the clean marker (reviewer_converged). Hand the
+  # PR to the human for /evaluate-pr (Flow 2.7). Checked BEFORE the findings loop so
+  # an already-clean PR can never march to a false STUCK on a sticky COMMENTED review.
+  elif reviewer_converged "${branch}"; then
+       touch ".harness/human-review-${feature}"
+
+  # Reviewer has findings and hasn't signalled done. Address them if budget remains;
+  # at FEEDBACK_CAP rounds without convergence, STUCK (covers genuine non-convergence
+  # AND a reviewer that flubbed the marker — the human takes over either way).
   elif gh pr view "${branch}" --json reviews \
          --jq '.reviews[] | select(.state=="CHANGES_REQUESTED" or .state=="COMMENTED")' \
          2>/dev/null | grep -q .; then
@@ -576,6 +657,9 @@ for feature in $(git for-each-ref --format='%(refname:lstrip=4)' \
           ".harness/stuck-${feature}" \
           ".harness/stuck-output-${feature}.log" \
           ".harness/stuck-body-${feature}.md" \
+          ".harness/human-review-${feature}" \
+          ".harness/human-review-posted-${feature}" \
+          ".harness/human-review-body-${feature}.md" \
           ".harness/sessions-${feature}.tsv"
   fi
 done
@@ -600,7 +684,7 @@ echo "${CUR}" > .harness/last-main-sha
 # fixes the code, then merges. /learn picks up the context correction at merge.
 ```
 
-Seven load-bearing properties (each one is the dispatcher's concrete realization of an invariant in [designInvariants.md](./designInvariants.md)):
+Eight load-bearing properties (each one is the dispatcher's concrete realization of an invariant in [designInvariants.md](./designInvariants.md)):
 
 1. **One transition per tick per branch, max.** The `if/elif` chain fires at most one branch. Next tick, the artifact written by this tick satisfies that condition and the *next* `elif` fires. The state machine walks forward one step at a time. → Invariant 5.
 2. **Artifacts are the only state.** No in-memory state, no checkpoint files describing "what step we're on." A sentinel file existing IS that phase being done. Crash recovery is free — the next tick re-derives state from disk. → Invariants 1 + 4.
@@ -608,7 +692,8 @@ Seven load-bearing properties (each one is the dispatcher's concrete realization
 4. **The dispatcher never invokes an LLM directly.** It only spawns `claude -p` subprocesses or shells out to `gh`/`git`. Each subprocess is a fresh OS process, a fresh model session, a clean context window. `run_claude` `cd`s the subprocess into the feature worktree before launching (there is no print-mode `--cwd` flag, and the `cd` is also what gives the skill its `.claude/` command + `AGENTS.md` discovery; the `learn` subprocess runs at the repo root on `main`). A skill's non-zero exit is recorded but never aborts the tick — the absent sentinel makes the next tick retry. `[[clean-state-handoff]]` made concrete. → Invariant 5.
 5. **Every gate is bounded — no infinite loops.** Three circuit breakers, all deterministic: the PRD-runner gate stops after `IMPLEMENT_CAP` attempts (the plan may be broken, not the code); `local-checks.sh` uses a two-strike retry (auto-fix, then focused LLM fix); the feedback loop stops after `FEEDBACK_CAP` rounds. Each terminal STUCK drops a `.harness/stuck-<f>` sentinel and halts that feature. Projects without `local-checks.sh` skip that gate entirely. The first green PRD-runner result is cached in a committed+pushed `specs/<f>/.prd-passed` sentinel, so a runner that shells out to an LLM-as-judge runs **once**, not every tick — the routing stays deterministic and cheap (Inv 5) and a non-deterministic judge can't flip a passed feature back into implement. The gate still ran and passed before merge, so caching it is not an Inv 8 bypass. → Invariants 5 + 8 + 9.
 6. **`MAX_WORKTREES` is the single concurrency knob.** Default `1` = FIFO single-worktree; raise it for bounded parallelism. Claims are **lazy** — PRDs over remaining capacity stay in `prd/<slug>/*` as the visible waiting queue, never prematurely renamed to `feature/<f>`. In-flight work always continues regardless of cap changes (the cap throttles intake, not continuation). Pickup order is FIFO by remote branch committerdate. → Invariants 2 + 3.
-7. **STUCK is the third human-steering point; memory has one write path.** A cap-hit in step 3 calls `signal_stuck`, which opens (or comments on) the PR with the session log, the failing-output tail, and the diagnosis-first checklist — then halts that feature. The human's first job is the context defect, not the code; the merge carries both fixes back. Memory is *only* written by `/learn` at step 5, post-merge, from ground truth. → Invariant 7.
+7. **STUCK is a human-steering point; memory has one write path.** A cap-hit in step 3 calls `signal_stuck`, which opens (or comments on) the PR with the session log, the failing-output tail, and the diagnosis-first checklist — then halts that feature. The human's first job is the context defect, not the code; the merge carries both fixes back. Memory is *only* written by `/learn` at step 5, post-merge, from ground truth. → Invariant 7.
+8. **Convergence has its own exit — HUMAN_REVIEW — distinct from STUCK.** The feedback loop's healthy terminal state is *not* the cap; it's the reviewer posting `REVIEW_CLEAN_MARKER`, which the dispatcher (`reviewer_converged`) detects and turns into `human-review-<f>`. The guard then posts the session trail once and halts, unbounded, for the human's `/evaluate-pr` pass. This both closes the loop's missing third exit and fixes the latent bug where a sticky historical `COMMENTED` review marched an already-clean PR to a false STUCK (the marker, not review state, is now the convergence signal). STUCK = failure handoff; HUMAN_REVIEW = success handoff; the human then merges, closes, or fixes-and-pushes — the loop does not re-engage. → Invariant 7 (the human-steering surface) + Flow 2.7.
 
 Adding a new skill to the pipeline (say, `/security-review` between validate and implement) means inserting one `elif` clause. Not writing a new dispatcher. Not changing any inner skill.
 
@@ -628,7 +713,9 @@ Every skill in the chain has a contract with the dispatcher: *what artifacts mus
 | `/fix-local-checks` *(new, focused)* | Cause fixed (never silenced; no skip markers), re-verified, committed | `scripts/local-checks.sh` exits 0 |
 | Final PR | `feature/<f>` PR exists against main | `gh pr view feature/<f>` succeeds (deterministic) |
 | Reviewer (managed or self-hosted) *(see Flow 2.5)* | Inline comments + check run posted on PR | `gh pr view --json reviews` returns reviewer entries |
-| `/address-feedback` *(new, see Flow 2.5)* | For Clear comments: code changes committed and pushed. For Ambiguous/Complex/Out-of-PRD-Scope: replies posted to threads. | Counter `.harness/feedback-rounds-<f>` incremented (deterministic); reviewer's next pass posts no new Important findings |
+| `/address-feedback` *(new, see Flow 2.5)* | For Clear comments: code changes committed and pushed. For Ambiguous/Complex/Out-of-PRD-Scope: replies posted to threads. *(Unchanged by Flow 2.7 — convergence is detected by the dispatcher, not the responder.)* | Counter `.harness/feedback-rounds-<f>` incremented (deterministic); reviewer's next pass posts no new Important findings |
+| HUMAN_REVIEW handoff *(dispatcher, see Flow 2.7)* | `reviewer_converged` sees `REVIEW_CLEAN_MARKER` on the PR (or no reviewer at PR-open) | `.harness/human-review-<f>` sentinel; dispatcher posts the session trail once (via `signal_human_review`) and halts that feature, unbounded, until merge/close |
+| `/evaluate-pr` *(new, human-attentive, see Flow 2.7)* | Human invokes after HUMAN_REVIEW handoff | Merge, close, or fix-and-push (`git push origin HEAD:feature/<f>`). Human-invoked, not the dispatcher — like `/intent`. **No memory writes** (not merged = not ground truth). The loop does not re-engage |
 | STUCK escalation | Any step's cap hit (`PLANNING_CAP`, `VALIDATE_CAP`, `IMPLEMENT_CAP`, `LOCAL_CHECKS_CAP`, or `FEEDBACK_CAP`); `signal_stuck` opens or comments on the PR with the session log + diagnosis-first checklist | `.harness/stuck-<f>` sentinel; dispatcher halts that feature until merge/close |
 | `/learn` *(post-merge)* | Expert shard + `invariants.md` updates, candidate lints (passing current main), AGENTS.md pointer updates, `changelog.md` entry; `learn/<sha>` branch pushed. Human-authored memory edits already in the merged diff are treated as ground truth. | Remote ref `learn/<sha>` exists |
 
@@ -737,6 +824,56 @@ The pattern is already shipping in several forms — this design is consolidatin
 What this design adds on top of the shared vertebra: the *artifact-driven state machine* (richer than `feature_list.json`), the *PRD-test gate* (more rigorous than "the agent self-reports done"), and the *Expert update loop* (the system learns from merges, not just produces them).
 
 External harnesses (OpenSWE, Cursor's background agents, Devin-style runners) can also consume `prd/*` branches if pointed at them — they become a sixth row in the outer-runtime table. The skills, dispatcher, and artifacts don't care which runtime is doing the triggering.
+
+---
+
+## The Human Loop
+
+Everything above describes the **machine**: the inner loop (one skill, fresh context) and the outer loop (poll, dispatch). But there is a second loop running in parallel — the **human's** loop — and the machine exists to serve it. Naming it explicitly is what keeps the human's job legible as the machine takes over more of the typing.
+
+The human's work is three phases, and they form a closed cycle:
+
+```
+        ┌──────────────────── THE HUMAN LOOP ────────────────────┐
+        │                                                         │
+   Understanding ───▶ Intent ───▶ [ the machine builds ] ───▶ Evaluate
+   deep grasp of      express what    inner + outer loops      walk the result,
+   the problem,       to build         = the dispatcher         run it, build a
+   the domain, the    (/intent →                                firm grasp; then
+   solution space     PRD + runner)                             merge, fix, or
+        ▲                                                        close
+        │                                                         │
+        └──────────── evaluate deepens understanding ─────────────┘
+```
+
+- **Understanding** *(planned — not built)*. Before you can express intent, you need a deep grasp of the problem area: the domain, the prior art, the solution space, the trade-offs. The recommended approach is an LLM-as-tutor wrapper over the project's wiki / knowledge base (the "Karpathy LLM-wiki" pattern) — Socratic exploration that builds *your* model, not the agent's. This phase is on the roadmap, not yet implemented.
+- **Intent** *(built — `/intent`)*. Turn that understanding into a PRD plus a runnable definition of done. The one human-attentive skill at the **front** of the machine. See Flow 1.
+- **Evaluate** *(building — `/evaluate-pr`; `/evaluate-sessions` planned)*. After the machine produces a PR, evaluate it: walk the change, run the system, build a firm grasp of *why* it's shaped the way it is, then merge it (or fix-and-push, or close). The human-attentive skill at the **back** of the machine (Flow 2.7). `/evaluate-pr` evaluates the change; the planned `/evaluate-sessions` will evaluate the build *trail* (the `claude -p` session IDs the dispatcher posts on every PR), so a human resolving a STUCK — or simply curious — can trace which context shaped a decision.
+
+### The governing principle: outsource thinking, not understanding
+
+The Evaluate phase rests on Karpathy's line — *"you can outsource your thinking but you can't outsource your understanding."* It maps cleanly onto his verifiability thesis and tells the skill exactly what to transfer and what to skip:
+
+- **Verifiable → outsource freely.** Syntax, API recall, implementation mechanics. The model is superhuman here; spending human evaluation cycles on it is waste.
+- **Unverifiable → the human must own.** Architecture, the soundness of core abstractions, *why* the edge cases are handled this way, the merits of design decision X over Y, whether the UX feels right. Errors here are subtle and don't announce themselves — exactly where a human's understanding is load-bearing.
+
+So `/evaluate-pr`'s job is to **transfer the second category into the human's head and deliberately skip the first.** The tangible output is merge / fix-and-push / close; the *intangible* output — the human actually understanding the change — is the more important one, because it is the literal mechanism that closes the loop back to Understanding and sharpens the next Intent.
+
+### Why this matters more now, not less
+
+The shared-understanding function of code review is well documented: knowledge transfer is a primary goal of review, not a side effect — and it is "interpersonal and risk[s] being lost if the activity is automated." Earlier drafts of this design did exactly that: by making the reviewer non-conversational and reducing the human to a merge button, the machine kept the bug-catching and threw away the understanding. The Human Loop puts it back, as its own phase, with its own skill — and keeps the *conversation* out of PR threads (where it would re-introduce the convergence problem Flow 2.5 guards against) by holding it in a live, human-driven `/evaluate-pr` session instead. Only its outcomes (a merge, a close, or pushed fixes) ever touch the PR.
+
+### How the two loops interlock
+
+The human loop and the machine loop are coupled at exactly the points the earlier sections called "human-steering points":
+
+| Touchpoint | Human-loop phase | Machine-loop event |
+|---|---|---|
+| Confirm a PRD | end of **Intent** | kicks off Flow 2 (the dispatcher claims `prd/<author>/<f>`) |
+| Evaluate + merge | **Evaluate** | ends Flow 2.7; the merge triggers Flow 3 (`/learn`) |
+| Unstick a STUCK | a forced detour into **Evaluate** | Flow 2.6 handed the feature back |
+
+The machine's outputs are the human loop's inputs (the PR is what you evaluate) and the human loop's outputs are the machine's inputs (intent starts it, approval gates it). Neither loop is complete without the other — and crucially, **memory is still written only by `/learn`, from merged ground truth.** Nothing the human discovers during Evaluate is recorded as memory at evaluate time: the change isn't merged yet, so it isn't ground truth yet. Insights either become requested changes that ride into main (and `/learn` picks them up then) or live in the human's head (the intangible output). One write path, preserved.
 
 ---
 
@@ -948,6 +1085,81 @@ ambiguous (could mean "wrong priority" rather than "wrong approach"), and the
 human has already made whatever determination they wanted. The cleanup pass tears
 the worktree + state down on close; nothing else is owed.
 
+### Flow 2.7 — Convergence → HUMAN_REVIEW → `/evaluate-pr` (the Evaluate phase)
+
+Flow 2.5 ends the automated debate, but it was missing its *healthy* terminal
+state. The feedback loop had only two exits: keep churning, or hit the cap and
+STUCK. There was no "the bot is satisfied, it's the human's turn" exit — and
+because GitHub reviews are **sticky** (a `COMMENTED` review lives in `.reviews[]`
+forever), the dispatcher's feedback `elif` kept matching on every tick, kept
+incrementing the counter, and marched an *already-clean* PR to a **false STUCK**.
+This flow adds the missing exit and fixes that bug in one move. It is the back-of-
+machine half of the [Human Loop](#the-human-loop) — the mirror of `/intent`.
+
+```mermaid
+flowchart TD
+  Conv([Reviewer has no Important findings left]) --> Marker[Reviewer posts a PR comment<br/>containing REVIEW_CLEAN_MARKER<br/>per REVIEW.md]
+  Marker --> Detect{Dispatcher: reviewer_converged?<br/>marker comment present}
+  Detect -->|yes| Sentinel[Dispatcher writes<br/>.harness/human-review-&lt;f&gt;]
+  Sentinel --> Guard[Guard: post session trail once,<br/>then halt this feature.<br/>No advance, unbounded wait.]
+  Guard --> Human([Human runs /evaluate-pr])
+  Human --> Checkout[Detached checkout of PR head<br/>in the human's own checkout<br/>git checkout --detach origin/feature/&lt;f&gt;]
+  Checkout --> Walk[Walk the change + run the system together.<br/>Transfer understanding, not syntax.<br/>Ingest — don't rehash — the bot's findings.]
+  Walk --> Gate{Soft understanding gate:<br/>'Do you understand this change?'}
+  Gate --> Verdict{Merge, fix, or close?}
+  Verdict -->|Merge| Merge([Human merges → Flow 3 /learn])
+  Verdict -->|Fix| Fix[Edit + push HEAD:feature/&lt;f&gt;;<br/>reviewer re-runs → re-converges → merge]
+  Verdict -->|Close| Close([Close PR; cleanup tears down])
+  Fix --> Merge
+```
+
+**The dispatcher detects convergence; nothing is written by the responder.** The
+signal is a marker comment: when the reviewer has no Important findings left,
+`REVIEW.md` instructs it to post a PR comment containing `REVIEW_CLEAN_MARKER`
+(default `HARNESS_REVIEW_CLEAN`). The dispatcher's `reviewer_converged` sees the
+marker and writes `.harness/human-review-<f>` itself — deterministic, one `gh`
+call, no LLM, and no cross-worktree write (the host-side `.harness` stays
+dispatcher-owned). Detection is deliberately **dead simple: marker present →
+converge**, with no freshness or author check. A push that lands *after* the marker
+comes from the human (the loop is already halted in HUMAN_REVIEW), who handles
+whatever the reviewer then says. If the reviewer never emits the marker, the
+feedback loop just runs to `FEEDBACK_CAP` and STUCKs — a clean PR the human merges;
+acceptable degradation, no special case. (`REVIEW_CLEAN_MARKER` empty = no reviewer
+→ converge at PR-open.)
+
+**The session trail is posted in the healthy state too — by design.** STUCK posts
+the `claude -p` trail so the human can diagnose a failure; HUMAN_REVIEW posts the
+same trail with an invitational framing. It's always useful to have the build trail
+on the PR: if the human evaluates and decides *not* to merge, the session IDs let
+them open any trace and find which context (PRD, spec, a skill, memory) shaped the
+decision they disagree with. This is also the substrate the planned
+`/evaluate-sessions` skill will consume.
+
+**The human evaluates in their own checkout, not the harness worktree.** Like
+`/intent`, `/evaluate-pr` runs where the human is — their own checkout — which
+Invariant 6 guarantees the harness never wipes (the per-feature worktree, by
+contrast, is `git reset --hard`'d at the top of every tick). The one wrinkle: the
+per-feature worktree still *holds* `feature/<f>` during review, and git refuses the
+same branch in two worktrees. So `/evaluate-pr` checks out the PR head **detached**
+(`git fetch && git checkout --detach origin/feature/<f>`), runs and explores there,
+and returns to `main` when done. Preconditions match `/intent`: a clean tree, and a
+bootstrap so the app actually runs. Because the HUMAN_REVIEW guard has halted
+automation, the human gets a stable snapshot — no concurrent agent pushes.
+
+**Three outcomes — and the loop never re-engages.** The human is the last mile;
+there is no "request changes back to the harness."
+- **Merge.** The skill merges on the human's explicit go-ahead (this is the human merging, through the skill — consistent with "humans merge"). The merge triggers Flow 3.
+- **Fix, then merge.** If the walk surfaces something to change — taste ("this could be simpler") or a **PRD defect** seen only on review — the human and the skill make the fix *here*, commit, and push (`git push origin HEAD:feature/<f>`, from the detached HEAD). The reviewer re-runs on the push and re-posts the marker when clean; the human then merges. The fix is a code change on the branch; `prd.md` is left alone.
+- **Close.** If the change is wrong or unwanted, close the PR; cleanup tears down the worktree. A different approach is a fresh `/intent`, not a change request here.
+
+**The understanding gate is soft.** `/evaluate-pr` always *offers* the full walk-through and ends on "do you feel you understand this change?" — because the understanding is the point. But a small or obvious change can be merged quickly: skipping the walk-through requires an explicit "yes, skip — I already understand this," not a silent rubber-stamp. The default leans toward understanding; the human can opt out per-PR.
+
+**No memory write here.** Whatever the human learns during evaluation is *not*
+recorded to the Expert or AGENTS.md at this point — the change isn't merged, so it
+isn't ground truth. If an insight becomes a pushed fix, it rides into main and
+`/learn` captures it post-merge (Flow 3). Otherwise it lives in the human's head and
+sharpens the next `/intent`. One write path, preserved.
+
 ### Flow 3 — Merge to main → memory update via `/learn`
 
 When code lands on main, `/learn` reconciles the project's long-term memory with
@@ -1058,7 +1270,8 @@ action. The next skill fires when its trigger condition is met.
 | `/spec-validate` | `.planning-done` present, `.validated` absent | in-place spec edits + `.validated` |
 | `/implement-mainspec` | `.validated` present, `prds/<f>/run-prd-test.sh` exits non-zero | commits on `feature/<f>` until runner exits 0 |
 | `/fix-local-checks` | `scripts/local-checks.sh` fails post-implement | patch + commit |
-| `/address-feedback` | PR has unresolved reviewer findings (budget enforced externally) | commits for Clear; replies for Ambiguous/Complex/Out-of-Scope |
+| `/address-feedback` | PR has unresolved reviewer findings (budget enforced externally) | commits for Clear; replies for Ambiguous/Complex/Out-of-Scope; `human-review-<f>` sentinel on convergence |
+| `/evaluate-pr` | *human-initiated* after the HUMAN_REVIEW handoff comment | merge, close, or fix-and-push; **writes no memory** |
 | `/learn` | post-merge to main, no `learn/<sha>` on origin | Expert shards + invariants + AGENTS.md pointers + candidate lints |
 
 **Idempotency rule.** Every skill must be safe to re-invoke on the same disk
@@ -1070,6 +1283,7 @@ mid-skill leaves the next invocation a clean re-derivation from disk.
 - **AGENTS.md (this file + nested ones) = eager memory.** A map; loaded automatically. Keep it pointer-shaped and under the cap.
 - **The Expert = lazy memory.** The dense knowledge, pulled on demand.
 - `/learn` (post-merge, ground truth) writes both. It is the **only** path that writes memory; it lands on a reviewable PR a human merges.
+- When a PR converges, the harness hands it to you for **`/evaluate-pr`** (the Evaluate phase): walk the change, run it, build a firm understanding, then merge it (or fix-and-push, or close). Nothing you learn here is memory until it merges.
 - If a feature hits **STUCK** (any step's retry cap), the dispatcher posts the diagnostic to the PR and halts. The **human's first job is the context defect**, not the code — correct the misleading `AGENTS.md` / Expert / spec / PRD on the branch, then fix the code, then merge. `/learn` observes the context correction in the merged diff.
 
 ## Branch lifecycle
@@ -1320,6 +1534,7 @@ Per [[software-3-0]]: the program *is* the prompt. Every customization point bel
 | Seam                          | File                                                       | What it controls                                              |
 |-------------------------------|------------------------------------------------------------|---------------------------------------------------------------|
 | Intent Q&A style              | `.claude/skills/intent/SKILL.md`                           | How open-ended; when to suggest "create a PRD"                |
+| Evaluate walk-through & gate   | `.claude/skills/evaluate/evaluate-pr/SKILL.md`            | Depth of the understanding walk-through; how soft the "do you understand?" gate is |
 | Failing-test heuristic        | `.claude/skills/intent/SKILL.md` (verification section)    | What counts as "failing for the right reason"                 |
 | Expert shard taxonomy         | `.claude/skills/memory/learn/references/expert-shards.md`  | What categories the Expert is sharded into                    |
 | Memory routing & the bar      | `.claude/skills/memory/learn/references/routing-rules.md`  | The four destinations, five-predicate test, AGENTS.md caps    |
@@ -1433,7 +1648,8 @@ Items noticed while drafting that we deferred or didn't fully resolve:
 - **Reviewer failure or timeout.** When the reviewer (self-hosted Action or managed Code Review) errors out or hits its time limit, no findings are posted. The dispatcher's current `gh pr view --json reviews` check can't distinguish "no findings because the PR is clean" from "no findings because the reviewer crashed" — both look like absence-of-comments. Worth: parse the `Claude Code Review` check-run conclusion (managed service uses titles like "Code review encountered an error" and "Code review timed out"; self-hosted Actions surface the equivalent via job exit code). Treat errored as "do not advance — retry once, then post a NEEDS-REVIEWER comment" rather than "ready to merge." Cheap fix; just not in the v1 dispatcher.
 
 - **Cost cap alongside the round cap.** The default cap is 5 rounds, but a single round on a large PR can cost more than 5 rounds on a small one. For projects on the managed service ($15-25/round), 5 rounds is potentially $125. A complementary cost cap — `.harness/feedback-cost-${feature}` accumulating per-round cost from the API response — would let the dispatcher stop on EITHER condition. Skipped in v1 because the recommended self-hosted default with Haiku + Expert-as-context + prompt caching makes round-count the dominant constraint; worth adding when teams scale up to managed-service usage. Owner: project, not the harness — the billing surface varies by reviewer choice.
-- **Context Specs skill migration to satisfy the dispatcher contract.** Five tracked changes against the existing skills (see "The skill contract" subsection): (1) `/intent` produces `prds/<f>/run-prd-test.sh`; (2) `/spec-planning` writes `specs/<f>/.planning-done` sentinel; (3) `/spec-validate` writes `specs/<f>/.validated` sentinel; (4) `/implement-mainspec` runs purely headless (no `AskUserQuestion` tier gates — replace with auto-merge on signal pass); (5) align branch naming from `feat/` to `feature/`. Plus three new skills: `/fix-local-checks` (built — `.claude/skills/dev/fix-local-checks/`), `/learn` (built — `.claude/skills/memory/learn/`), and `/address-feedback` (Flow 2.5 — not yet built). Owner: Rico.
+- **Context Specs skill migration to satisfy the dispatcher contract.** Five tracked changes against the existing skills (see "The skill contract" subsection): (1) `/intent` produces `prds/<f>/run-prd-test.sh`; (2) `/spec-planning` writes `specs/<f>/.planning-done` sentinel; (3) `/spec-validate` writes `specs/<f>/.validated` sentinel; (4) `/implement-mainspec` runs purely headless (no `AskUserQuestion` tier gates — replace with auto-merge on signal pass); (5) align branch naming from `feat/` to `feature/`. Plus four new skills: `/fix-local-checks` (built — `.claude/skills/dev/fix-local-checks/`), `/learn` (built — `.claude/skills/memory/learn/`), `/address-feedback` (Flow 2.5 — built; **unchanged** by Flow 2.7, since convergence is dispatcher-detected via the `REVIEW_CLEAN_MARKER` comment, not responder-written), and `/evaluate-pr` (Flow 2.7 — built — `.claude/skills/evaluate/evaluate-pr/`; outcomes are merge / close / fix-and-push). Owner: Rico.
+- **The Human Loop is partially built.** Understanding → Intent → Evaluate (see "The Human Loop"). `/intent` (Intent) and `/evaluate-pr` (Evaluate) are built; two pieces are planned: (1) the **Understanding** phase — an LLM-as-tutor wrapper over the project wiki/knowledge base (the Karpathy LLM-wiki pattern) that builds the human's model before Intent; (2) **`/evaluate-sessions`** — a sibling of `/evaluate-pr` under the `evaluate/` category that evaluates the `claude -p` build trail (the session IDs now posted on every PR by both `signal_stuck` and `signal_human_review`), so a human resolving a STUCK — or simply curious — can trace which context shaped a decision without hand-reading raw `.jsonl`. Owner: Rico.
 - **Per-feature worktree naming + host-worktree topology — resolved.** Earlier prose described "one harness worktree that moves between feature branches"; the dispatcher has always created **one ephemeral worktree per in-flight feature** (`<repo>-harness-<feature>`, per Inv 3), and the host worktree (`<repo>-harness`) stays put. Two latent bugs from the mismatch are fixed: (1) `harness-init` Step 8 created the host worktree with `git worktree add ../<repo>-harness main`, which always fails because the human's checkout already holds `main` — now `--detach origin/main`; (2) `WORKTREE_BASE` derived `<repo>` from `$PWD`, doubling the suffix to `<repo>-harness-harness-<feature>` when the dispatcher runs from the host worktree — now derived from the **main worktree**, so per-feature paths are `<repo>-harness-<feature>` regardless of cwd. Concurrency is still governed by `MAX_WORKTREES` (default 1 = FIFO serialization; raise it for bounded parallelism — more disk, better wall-clock), *not* by a worktree-path toggle.
 - **Harness host-worktree sync — resolved.** The host worktree sits at a detached HEAD and does not auto-advance when `main` moves, yet the dispatcher, `bootstrap-worktree.sh`, `.harness/env`, the `/learn` skill, the memory, and the root `AGENTS.md` are all read *from* it. Without a sync step, loop-level infrastructure would freeze at the commit the host worktree was created on. Fix: the outer loop targets a thin wrapper `scripts/harness-tick.sh` that force-syncs the host to a clean `origin/main` (`git checkout -f --detach origin/main` + `git clean -fd`) and then `exec`s the (HEAD-agnostic) dispatcher. The sync lives in the wrapper, before `exec`, so the dispatcher never overwrites its own running file (its `flock` is on `$0`). Feature *pipeline* skills need no sync — they ride per-feature worktrees branched from the PRD branch, so new features pick up updates on their own; only loop infra and `/learn`-time context ride the host worktree. So "merge to main" is the single propagation surface for loop infra too, consistent with the rest of the design.
 - **`/learn` runs in the host worktree, not a dedicated one — a design decision, not a gap.** `/learn` is dispatched with cwd `"."` (the host worktree). One could give it its own throwaway worktree (as the pipeline steps get), but the `harness-tick.sh` sync already guarantees `"."` is a clean checkout of `origin/main` at the start of every tick, which is exactly the state `/learn` needs. The established pattern (reuse the host worktree) is the correct choice here; we may never add a dedicated `/learn` worktree, and that's fine — noted so the absence is understood as deliberate, not overlooked.

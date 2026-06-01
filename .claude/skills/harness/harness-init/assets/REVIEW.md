@@ -2,8 +2,22 @@
 
 ## Re-review convergence
 After the first review, suppress new Nits and post Important findings only.
-Do not re-flag findings already addressed in a subsequent push — let the
-auto-resolve mechanism handle them.
+Do not re-flag findings already addressed in a subsequent push.
+
+## Signal when you are done (REQUIRED — the harness depends on this)
+When you review a revision and have **no Important (🔴) findings to request** on
+it, post a **top-level PR comment whose body is exactly**:
+
+    HARNESS_REVIEW_CLEAN
+
+Post it only when you would otherwise be approving — i.e., all your follow-ups are
+answered and nothing Important remains on the current commit. Post it once per
+clean revision (a later push that you then find issues with supersedes it — just
+post your findings as normal; post the marker again only when clean again).
+
+This is how the harness knows the review loop has converged and hands the PR to a
+human for evaluation. If you forget it, the loop eventually reaches its round cap
+and escalates to a human anyway, but the marker is the clean path — don't skip it.
 
 ## What Important means here
 Reserve 🔴 Important for findings that would break behavior, leak data, or

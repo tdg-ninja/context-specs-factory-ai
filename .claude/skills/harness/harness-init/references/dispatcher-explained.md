@@ -10,7 +10,7 @@ enough to decide whether to tweak it. Never present it as a black box.
 the decision path. It runs once per tick. The `if/elif` chain is the state
 machine; the artifacts on disk are the state.
 
-## The six load-bearing properties
+## The seven load-bearing properties
 
 Explain these as the "why it's safe" of the script. Each maps to an invariant.
 
@@ -38,6 +38,13 @@ Explain these as the "why it's safe" of the script. Each maps to an invariant.
    worktree. Claims are lazy: PRDs over capacity stay in `prd/<slug>/*` as the
    visible queue. In-flight work always continues regardless of cap changes.
    (Inv 2 + 3)
+7. **Convergence has its own exit — HUMAN_REVIEW — separate from STUCK.** The
+   review loop's healthy end is the reviewer posting `REVIEW_CLEAN_MARKER`;
+   `reviewer_converged` sees it and writes `human-review-<f>`, the guard posts the
+   session trail once and halts the feature for the human's `/evaluate-pr`. The
+   marker (not sticky review state) is the signal, so a clean PR can't false-STUCK
+   on a stale `COMMENTED` review. If the reviewer never marks clean, the feedback
+   cap STUCKs instead — fine, the human merges. (Flow 2.7)
 
 ## Section-by-section map
 
@@ -51,7 +58,8 @@ Explain these as the "why it's safe" of the script. Each maps to an invariant.
 | step 3 | advance each feature one step | **This is where you add/remove pipeline steps** — one `elif` per step. |
 | step 4 | cleanup merged/closed PRs | Safe to extend (e.g., notify on cleanup). |
 | step 5 | post-merge `/learn` (memory update, ground truth only) | Debounce/idempotency live here. |
-| helpers | `run_claude` (session-tagged invocation + TSV log) and `signal_stuck` (PR-body STUCK signal) | Used by every step in §3 that calls `claude -p` or hits a cap. |
+| step 3 (review) | the feedback gate has three branches: `reviewer_converged` (marker present) → write `human-review-<f>`; else findings → `/address-feedback`; else cap → STUCK | Convergence is the marker; the gate order matters (converge before the findings loop). |
+| helpers | `run_claude` (session-tagged invocation + TSV log), `signal_stuck` (PR-body STUCK signal), `render_sessions_table` (shared trail renderer), `signal_human_review` (the convergence handoff comment), `reviewer_converged` (marker check) | Used by §3 steps that call `claude -p`, hit a cap, or detect convergence. |
 
 ## The bootstrap hook — project-owned worktree provisioning
 
@@ -100,11 +108,21 @@ worktree, and that's exactly what the wrapper refreshes. The `/learn` step keepi
 cwd `"."` (the host worktree) is therefore safe — the wrapper guarantees `"."` is a
 clean checkout of main each tick, so no dedicated `/learn` worktree is needed.
 
-## Memory is single-path; STUCK is the third human-steering point
+## Human-steering points: Evaluate (HUMAN_REVIEW) and STUCK
 
-Memory has **one write path** — `/learn` at step 5, post-merge, ground truth only.
-There is no separate write path for failed features. Instead, **STUCK** (a step in
-§3 hitting its cap) is treated as a first-class escalation: the dispatcher posts
+The human steers the machine at three touchpoints (the Human Loop — confirm a PRD,
+evaluate-then-merge a PR, unstick a STUCK). Two of those live in this script.
+
+**HUMAN_REVIEW (the healthy one).** When the reviewer converges (posts
+`REVIEW_CLEAN_MARKER`), `reviewer_converged` writes `human-review-<f>`; the guard
+posts the build-session trail once and halts the feature. The human runs
+`/evaluate-pr` to walk the change, run it, and merge (or fix-and-push, or close).
+The loop does not re-engage — the human is the last mile.
+
+**STUCK (the failure one).** Memory still has **one write path** — `/learn` at step 5,
+post-merge, ground truth only. There is no separate write path for failed features.
+Instead, **STUCK** (a step in §3 hitting its cap) is a first-class escalation: the
+dispatcher posts
 to the PR (opening it as a draft if needed) with the session log, the failing
 output tail, and a diagnosis-first checklist, then halts the feature. The
 human's first job at STUCK is to identify the **context defect** (which
@@ -118,7 +136,7 @@ merge carries it home.
 
 ## The session log + STUCK signal
 
-Two small helpers, both above step 1, do the legwork:
+A few small helpers, all above step 1, do the legwork:
 
 - **`run_claude <step> <feature> <attempt#> <wt> "<skill cmd>"`** — wraps every
   `claude -p` call. `cd`s into the worktree `<wt>` first (there is no print-mode
@@ -131,7 +149,13 @@ Two small helpers, both above step 1, do the legwork:
 - **`signal_stuck <feature> <step> <cap> [output-file]`** — touches the stuck
   sentinel, composes a PR body (step, cap, tail of the session log, optional tail
   of the failing output, diagnosis-first checklist), and either opens a draft PR
-  or comments on an existing one. This is the single human-facing surface.
+  or comments on an existing one. The single human-facing surface for failures.
+- **`reviewer_converged <branch>`** — true iff a PR comment contains
+  `REVIEW_CLEAN_MARKER`. One `gh` call, no LLM; deliberately no freshness/author
+  check (see the helper's comment). Empty marker = no reviewer → false.
+- **`signal_human_review <feature>`** — the convergence counterpart of
+  `signal_stuck`: posts the "Ready for your review" comment with the session trail
+  (via the shared `render_sessions_table`) so the human can `/evaluate-pr`.
 
 If your `claude -p` version doesn't support `--session-id`, swap that flag for
 `--output-format json` and parse `session_id` from stdout — `run_claude` is the

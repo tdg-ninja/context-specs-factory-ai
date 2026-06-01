@@ -40,6 +40,7 @@ action. The next skill fires when its trigger condition is met.
 | `/implement-mainspec` | `.validated` present, `specs/<f>/.prd-passed` absent | commits on `feature/<f>` until `run-prd-test.sh` exits 0 (dispatcher then records `.prd-passed`) |
 | `/fix-local-checks` | `scripts/local-checks.sh` fails post-implement | patch + commit |
 | `/address-feedback` | PR has unresolved reviewer findings (budget enforced externally) | commits for Clear; replies for Ambiguous/Complex/Out-of-Scope |
+| `/evaluate-pr` | *human-initiated* after the reviewer converges (the "Ready for your review" handoff) | merge, close, or fix-and-push; **no memory writes** |
 | `/learn` | post-merge to main, no `learn/<sha>` on origin | Expert shards + invariants + AGENTS.md pointers + candidate lints |
 
 **Idempotency rule.** Every skill must be safe to re-invoke on the same disk state.
@@ -53,6 +54,9 @@ leaves the next invocation a clean re-derivation from disk.
 - **The Expert = lazy memory.** The dense knowledge, pulled on demand.
 - `/learn` (post-merge, ground truth) writes both. It is the **only** path that
   writes memory; it lands on a reviewable PR a human merges.
+- When the reviewer converges, the harness hands the PR to you for **`/evaluate-pr`**:
+  walk the change, run it, build understanding, then merge (or fix-and-push, or
+  close). Nothing learned there is memory until it merges.
 - If a feature hits **STUCK** (any step's retry cap), the dispatcher posts the
   diagnostic to the PR and halts. The **human's first job is the context
   defect**, not the code — correct the misleading `AGENTS.md` / Expert / spec

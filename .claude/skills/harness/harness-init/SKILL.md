@@ -78,6 +78,7 @@ the chosen values. Add the runtime counter files to `.gitignore`:
 .harness/planning-attempts-*
 .harness/validate-attempts-*
 .harness/stuck-*
+.harness/human-review-*
 .harness/sessions-*.tsv
 .harness/last-main-sha
 ```
@@ -88,8 +89,10 @@ the chosen values. Add the runtime counter files to `.gitignore`:
 
 Read `references/dispatcher-explained.md`. Copy **both** `assets/poll-and-dispatch.sh`
 → `scripts/poll-and-dispatch.sh` and `assets/harness-tick.sh` → `scripts/harness-tick.sh`,
-`chmod +x` both. Then **walk the user through them** — the six load-bearing
-properties of the dispatcher, the section map, the **bootstrap hook** (the
+`chmod +x` both. Then **walk the user through them** — the load-bearing
+properties of the dispatcher (including the HUMAN_REVIEW convergence exit — the
+reviewer's `REVIEW_CLEAN_MARKER` comment hands the PR to the human for
+`/evaluate-pr`), the section map, the **bootstrap hook** (the
 project-owned worktree provisioning; explain why it's there), and the
 **`harness-tick.sh` wrapper**: the outer loop targets the wrapper, which
 force-syncs the host worktree to a clean `origin/main` and *then* `exec`s the
@@ -190,7 +193,18 @@ the tradeoffs and that switching later is cheap (one workflow file). Then:
   interactive `@claude` agent, that's the stock `examples/claude.yml` added
   separately (see reviewer-options.md) — not bundled here.
 - **Managed:** copy `REVIEW.md`; give the GitHub App install instructions.
-- **None:** create nothing; note it's addable later.
+- **None:** create nothing; set `REVIEW_CLEAN_MARKER=` (empty) in `.harness/env` so
+  the dispatcher converges at PR-open and hands straight to `/evaluate-pr`; note a
+  reviewer is addable later.
+
+**Convergence marker (both reviewer paths).** `REVIEW.md` instructs the reviewer to
+post a PR comment containing `HARNESS_REVIEW_CLEAN` once it has no Important findings
+left. That marker is how the dispatcher knows the review loop converged and hands the
+PR to the human for `/evaluate-pr` (Flow 2.7) — it's a single deterministic signal,
+the same for managed and self-hosted. The token is configurable via
+`REVIEW_CLEAN_MARKER` in `.harness/env` (must match what `REVIEW.md` tells the
+reviewer to post). If the reviewer never posts it, the feedback loop reaches
+`FEEDBACK_CAP` and STUCKs instead — a clean PR the human merges.
 
 ### Step 8 — Host worktree + provision
 
@@ -237,8 +251,11 @@ Offer to start it if they're ready. Finish with the **daily flow** recap:
 1. `/intent` in their normal checkout → confirm a PRD → walk away.
 2. Harness picks it up, runs the chain, opens a PR.
 3. Either:
-   - **Normal path:** review and merge the feature PR. Then review and merge the
-     `/learn` PR that follows (memory updates).
+   - **Normal path:** when the reviewer converges, the harness posts a "Ready for
+     your review" comment with the build-session trail and halts. Run
+     **`/evaluate-pr <feature>`** to walk the change, run it locally, and build a
+     firm understanding — then merge it (or fix-and-push, or close). Then review and
+     merge the `/learn` PR that follows (memory updates).
    - **STUCK path:** if any step hits its retry cap, the dispatcher posts a STUCK
      PR (or comment) with the session log + a diagnosis-first checklist. **Your
      first job is the context defect, not the code** — figure out which
@@ -250,9 +267,11 @@ Offer to start it if they're ready. Finish with the **daily flow** recap:
 
 ## Inner skill dependency
 
-The dispatcher calls `/intent`, `/spec-planning`, `/spec-validate`,
-`/implement-mainspec`, `/fix-local-checks`, `/address-feedback`, and `/learn`.
-harness-init wires the **outer** harness; it does not author these. Preflight
+The dispatcher calls `/spec-planning`, `/spec-validate`, `/implement-mainspec`,
+`/fix-local-checks`, `/address-feedback`, and `/learn`. Two more are
+**human-invoked**, not dispatched: `/intent` (front of the chain) and `/evaluate-pr`
+(the Evaluate phase — run after the harness posts its "Ready for your review"
+handoff). harness-init wires the **outer** harness; it does not author these. Preflight
 reports which are installed. If some are missing, set up the harness anyway and
 tell the user clearly which skills must be installed from the catalog before the
 chain runs end to end — the harness will dispatch to them the moment they exist.

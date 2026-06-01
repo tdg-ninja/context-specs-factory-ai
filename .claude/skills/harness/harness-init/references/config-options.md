@@ -53,6 +53,18 @@ halts that feature.
 All env-overridable in `.harness/env`. Raise for hard features; lower to fail
 faster.
 
+### `REVIEW_CLEAN_MARKER` (convergence signal, Flow 2.7)
+
+Default `HARNESS_REVIEW_CLEAN`. When the reviewer has no Important findings left,
+`REVIEW.md` instructs it to post a PR comment containing this token; the dispatcher
+(`reviewer_converged`) sees it and hands the PR to the human for `/evaluate-pr` (it
+writes `.harness/human-review-<f>`, posts the build-session trail once, and halts the
+feature until the human merges/closes). Detection is intentionally simple — marker
+present → converge, no freshness or author check. If the reviewer never posts it, the
+feedback loop reaches `FEEDBACK_CAP` and STUCKs instead (a clean PR the human merges).
+Set it **empty** in `.harness/env` when there is **no reviewer**, so the dispatcher
+converges at PR-open. Must match whatever `REVIEW.md` tells the reviewer to post.
+
 ### Loop interval (in the `/loop` invocation, not `.harness/env`)
 
 `/loop 5m /poll-and-dispatch` — the `5m` is the tick cadence. 5 minutes is a
@@ -87,6 +99,10 @@ Holds runtime state, all re-derivable, none of it secret:
 - `stuck-<f>` (sentinel), `stuck-output-<f>.log` (tee'd failing output),
   `stuck-body-<f>.md` (the PR-body composed at STUCK) — written when a cap hits;
   cleared on merge/close.
+- `human-review-<f>` (sentinel — reviewer converged, PR handed to the human),
+  `human-review-posted-<f>` (marks the trail comment already posted, so it posts
+  once), `human-review-body-<f>.md` (the "Ready for your review" comment) — written
+  at convergence (Flow 2.7); cleared on merge/close.
 - `sessions-<f>.tsv` — every `claude -p` invocation for this feature, one row each
   (timestamp, step, attempt, session_id, exit, duration). The STUCK PR body
   quotes the tail of this file so the human can open the trace by session_id.
@@ -95,8 +111,8 @@ Holds runtime state, all re-derivable, none of it secret:
 not project artifacts. harness-init adds `.harness/feedback-rounds-*`,
 `.harness/local-check-attempts-*`, `.harness/implement-attempts-*`,
 `.harness/planning-attempts-*`, `.harness/validate-attempts-*`,
-`.harness/stuck-*`, `.harness/sessions-*.tsv`, and `.harness/last-main-sha` to
-`.gitignore`. Whether `.harness/env` is committed is a choice: commit it to
+`.harness/stuck-*`, `.harness/human-review-*`, `.harness/sessions-*.tsv`, and
+`.harness/last-main-sha` to `.gitignore`. Whether `.harness/env` is committed is a choice: commit it to
 share defaults across a team's checkouts; keep it local (gitignored) if each
 dev tunes their own. Recommend committing `env` and ignoring the counters.
 
