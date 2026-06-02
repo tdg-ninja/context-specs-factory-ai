@@ -22,11 +22,27 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."   # repo root of the host worktree
 
+# Do NOT sync while a /learn is live in THIS worktree. /learn is the one skill that
+# runs in the host worktree (cwd "."), and it can outlast the tick interval (a
+# from-scratch Expert bootstrap is minutes). The dispatcher records its PID in
+# .harness/learn-running for the duration of the /learn call; force-syncing now would
+# `git checkout -f` / `git clean` the worktree out from under it, wiping its in-flight
+# Expert + learn/<sha> branch so it never reaches its push+PR step. A live PID means
+# skip this tick; a dead PID (crashed dispatcher) is stale — reap it and proceed.
+# This extends the dispatcher's flock discipline (Inv 5) to the per-tick sync.
+if [[ -f .harness/learn-running ]]; then
+  if kill -0 "$(cat .harness/learn-running 2>/dev/null)" 2>/dev/null; then
+    exit 0
+  fi
+  rm -f .harness/learn-running
+fi
+
 git fetch --quiet origin
 
 # Force a clean, current detached checkout of origin/main. `-f --detach` is
 # idempotent and self-healing: it recovers no matter what state a crash or a prior
-# /learn left the worktree in (e.g. left on a learn/<sha> branch). This is the
+# /learn left the worktree in (e.g. left on a learn/<sha> branch). The guard above
+# ensures we never do this to a /learn that is still running. This is the
 # host-worktree analogue of the dispatcher's per-feature wipe.
 git checkout --quiet -f --detach origin/main
 git clean -qfd                            # -d not -x: keep node_modules & .harness/* runtime state

@@ -96,7 +96,10 @@ reviewer's `REVIEW_CLEAN_MARKER` comment hands the PR to the human for
 project-owned worktree provisioning; explain why it's there), and the
 **`harness-tick.sh` wrapper**: the outer loop targets the wrapper, which
 force-syncs the host worktree to a clean `origin/main` and *then* `exec`s the
-(HEAD-agnostic) dispatcher. Explain why the sync lives in the wrapper, not the
+(HEAD-agnostic) dispatcher — but **skips the sync while a `/learn` is live** (it
+checks the dispatcher's `.harness/learn-running` PID marker), so the per-tick
+force-sync never resets the worktree out from under the one skill that runs in
+it (`/learn`, cwd `"."`). Explain why the sync lives in the wrapper, not the
 dispatcher: the dispatcher must never reset its own running file, and this is how
 loop-infrastructure updates merged to main (dispatcher, `.harness/env`, the
 `/learn` skill, memory, `AGENTS.md`) reach the loop — feature *pipeline* skills

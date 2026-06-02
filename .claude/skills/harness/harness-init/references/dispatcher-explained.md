@@ -108,6 +108,21 @@ worktree, and that's exactly what the wrapper refreshes. The `/learn` step keepi
 cwd `"."` (the host worktree) is therefore safe — the wrapper guarantees `"."` is a
 clean checkout of main each tick, so no dedicated `/learn` worktree is needed.
 
+**One subtlety the sync must respect: never reset the worktree out from under a
+running `/learn`.** `/learn` is the only skill that runs *in* the host worktree, and
+it can take longer than the tick interval (a from-scratch Expert bootstrap is
+minutes). If the next tick's force-sync fires mid-`/learn`, its `git checkout -f` +
+`git clean` wipe `/learn`'s in-flight Expert and `learn/<sha>` branch — so `/learn`
+never reaches its push+PR step, and because the tick never completes, `last-main-sha`
+never advances and the dispatcher re-triggers `/learn` from scratch every tick (an
+infinite build → wipe → rebuild, with no PR). The fix: the dispatcher writes its PID
+to `.harness/learn-running` for the duration of the `/learn` call, and
+`harness-tick.sh` checks that marker **before** syncing — a live PID means exit the
+tick untouched; a stale PID (crashed run) is reaped and the tick proceeds. This
+extends the dispatcher's `flock` serialization (Inv 5) to the one piece of per-tick
+work that lives in the wrapper, outside the lock. (Surfaced in dogfooding; see the
+big spec's "`/learn` in the host worktree" entry.)
+
 ## Human-steering points: Evaluate (HUMAN_REVIEW) and STUCK
 
 The human steers the machine at three touchpoints (the Human Loop — confirm a PRD,
@@ -183,3 +198,6 @@ one place to change.
   (loop-infra updates merged to main would never reach the running loop).
 - Move the host-worktree sync *into* the dispatcher (it would overwrite its own
   running file; the sync belongs in the wrapper, before `exec`).
+- Remove the `.harness/learn-running` guard from `harness-tick.sh` (the per-tick
+  force-sync would then race a still-running `/learn` and wipe its work mid-run —
+  `/learn` builds the Expert, the next tick deletes it, repeat, no PR ever lands).

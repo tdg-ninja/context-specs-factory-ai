@@ -435,14 +435,23 @@ done
 #    routes facts to: Expert shards, invariants, AGENTS.md pointers, or drafted
 #    lints. ls-remote makes it idempotent across nodes: first to push learn/<sha>
 #    wins; others exit. (Inv 7)
-#    /learn runs with cwd "." (the HOST worktree). That worktree is force-synced to
-#    a clean origin/main at the start of every tick by scripts/harness-tick.sh, so
-#    "." is always a fresh checkout of main — no dedicated /learn worktree needed.
+#    /learn runs with cwd "." (the HOST worktree). harness-tick.sh force-syncs that
+#    worktree to a clean origin/main at the START of each tick, so "." is a fresh
+#    checkout of main — no dedicated /learn worktree needed. Because /learn can run
+#    longer than the tick interval, we mark .harness/learn-running around it so the
+#    NEXT tick's sync skips rather than wiping a still-running /learn.
 LAST="$(cat .harness/last-main-sha 2>/dev/null || echo HEAD~50)"
 CUR="$(git rev-parse origin/main)"
 if [[ "${CUR}" != "${LAST}" ]] \
    && ! git ls-remote --exit-code origin "learn/${CUR}" >/dev/null 2>&1; then
+  # /learn operates in THIS host worktree (cwd "."). Record our PID so the next
+  # tick's harness-tick.sh sync refuses to reset the worktree out from under a
+  # still-running /learn (a crashed dispatcher leaves a dead PID the next tick
+  # reaps). Without this guard the per-tick force-sync races /learn and wipes its
+  # in-flight Expert + learn/<sha> branch. (Inv 5)
+  echo $$ > .harness/learn-running
   run_claude learn "_main" 1 "." "/learn --since ${LAST} --sha ${CUR}"
+  rm -f .harness/learn-running
 fi
 echo "${CUR}" > .harness/last-main-sha
 
