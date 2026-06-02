@@ -126,7 +126,8 @@ fail.
 ## When it can't make progress: STUCK
 
 Sometimes a feature genuinely can't get through a step — a plan is subtly wrong,
-a check won't pass honestly. The harness doesn't loop forever and it doesn't lie.
+a check won't pass honestly. The harness doesn't loop forever, and it won't fake
+success.
 Every step has a bounded retry budget; when a step hits its cap, the dispatcher
 declares the feature **STUCK**, posts a diagnostic to the PR, and halts that
 feature until you step in.
@@ -140,9 +141,8 @@ PRD that left something out — and correct that first. Because if the context t
 caused the failure stays wrong, the same class of failure comes back the next
 time a feature touches that area.
 
-STUCK is not an error state to be embarrassed about. It's the harness being
-honest about the boundary of what it can do alone, and routing the rest to the
-one place judgment lives.
+STUCK is the harness being honest about the boundary of what it can do alone —
+and routing the rest to the one place judgment lives.
 
 ## The branch namespace is the work queue
 

@@ -14,11 +14,12 @@ or without the harness in later chapters.
 
 ## The problem SDD solves
 
-Hand an agent "add search to the app" and watch what happens. It starts greping.
-It opens files to figure out your conventions. It guesses at how you test things.
-Halfway through a large feature the window is full of half-relevant code it
-retrieved on its own, the original intent has decayed, and a compaction event is
-about to quietly drop the part it actually needed.
+Give an agent "add search to the app" and it does something reasonable: it
+greps, opens files to infer your conventions, makes a guess at how you test
+things. On a small change that's fine. On a large feature it accumulates —
+halfway through, the window is full of half-relevant code the agent retrieved on
+its own, the original intent has decayed, and the next compaction is poised to
+drop the part it actually needed.
 
 SDD fixes this by doing the thinking **outside** the context window first, and
 persisting it as structured files the agent reads progressively. Two artifacts

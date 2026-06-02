@@ -3,10 +3,10 @@
 > The single biggest lever you have when you build with a coding agent is what
 > goes **into** — and what stays **out of** — its context window.
 
-Before any of the machinery in this library makes sense, you have to believe one
-thing: an agent is only ever as good as the context it's reasoning over. Not the
-model. Not the prompt you typed. The *context* — the actual set of tokens in the
-window at the moment it makes a decision.
+It helps to start with one observation, because everything else in this library
+follows from it: an agent is only ever as good as the context it's reasoning
+over — the actual set of tokens in its window at the moment it decides. Less the
+model in the abstract than the material in front of it right now.
 
 Everything Context Specs does is in service of getting the right context into
 that window at the right time, and keeping everything else out.
@@ -30,15 +30,16 @@ are easy to forget:
   the agent "forgets" — not because it's careless, but because the bytes are
   gone.
 
-These aren't model flaws to wait out. They're properties of working inside a
-finite window, and they get *worse* as a task gets bigger — exactly when you most
-need the agent to hold a coherent picture.
+None of these are quirks of a particular model; they're consequences of working
+inside a finite window. And they intensify as a task grows — just when holding a
+coherent picture matters most.
 
 ## Context engineering is choosing, not dumping
 
-The naive fix is to stuff everything in up front: here's the whole architecture,
-every convention, all the relevant files, now go. That fails for the reasons
-above — you've just front-loaded the pollution and guaranteed the compaction.
+The intuitive move is to load everything up front: here's the whole architecture,
+every convention, all the relevant files, now go. But that runs straight into the
+three problems above — it front-loads the pollution and makes compaction a
+near-certainty before the agent has done much of anything.
 
 **Context engineering is the opposite discipline: the agent dynamically pulls
 the context it needs, when it needs it, and the substrate it pulls from is the
@@ -62,8 +63,8 @@ wrong thing is never accidentally in the window at all.
 
 ## Why this is the foundation
 
-Hold onto this lens, because the rest of the library is just this idea, applied
-at larger and larger scope:
+This lens carries through the whole library — the same idea, applied at larger
+and larger scope:
 
 - A **spec** is the plan, externalized so it can't decay or compact — and sliced
   so the agent only ever loads the piece it's working on. *(Chapter 2.)*
@@ -76,8 +77,9 @@ at larger and larger scope:
   what the agents should have known, and putting it where they'll find it.
   *(Chapter 5.)*
 
-Same lever, every time. The only question each layer answers is: *at this scope,
-what is the right context, and how does it reach the window at the right moment?*
+It's one lever, pulled at every scale. Each layer is answering the same question:
+*at this scope, what is the right context, and how does it reach the window at the
+right moment?*
 
 ---
 

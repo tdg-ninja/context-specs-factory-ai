@@ -6,8 +6,8 @@ Read the first five chapters and a single line falls out of them:
 
 > **Your project is not a codebase you type into. It's a harness you tune.**
 
-That's not a metaphor and it's not aspirational. It's a literal description of
-what the previous chapters built. The harness plans features, implements them,
+Read it literally: it describes what the previous chapters actually built. The
+harness plans features, implements them,
 verifies them, and remembers what it learns. The code is an *output* of the
 system now — something the harness produces — not the thing you spend your hours
 authoring.
