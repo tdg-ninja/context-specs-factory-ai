@@ -1,6 +1,6 @@
 ---
 name: evaluate-pr
-description: Evaluate a PR the harness produced — walk the change, run the system together, and build a firm understanding before you merge it. Use after the harness hands a converged PR to you for review (the "Ready for your review" comment), or any time you want to deeply review an agent-authored PR. The human-attentive skill at the back of the chain; the mirror of /intent. Outcomes: merge, close, or fix-it-yourself-and-push (no handing work back to the loop). Writes no memory.
+description: Evaluate a PR the harness produced — walk the change, run the system together, and build a firm understanding before you merge it. Use after the harness hands a converged PR to you for review (the "Ready for your review" comment), or any time you want to deeply review an agent-authored PR. The human-attentive skill at the back of the chain; the mirror of /intent. Outcomes: merge, close, or fix-it-yourself-and-push - no handing work back to the loop.
 ---
 
 # evaluate-pr
@@ -49,9 +49,18 @@ simpler? is this abstraction sound? does the UX feel right?).
   on "do you feel you understand this change?" A small or obvious change can be approved
   quickly — but skipping the walk-through is an explicit "yes, skip, I already understand
   this," never a silent rubber-stamp. Default leans toward understanding.
-- **E7 — Nothing here is memory.** The change isn't merged, so it isn't ground truth.
-  **Never** write the Expert or AGENTS.md. Insights either become a requested change
-  (which `/learn` will capture *after* the eventual merge) or live in the human's head.
+- **E7 — Memory written here is the human's call, and it's authoritative.** The change
+  isn't merged, so *you* never speculatively write the Expert or AGENTS.md on your own
+  initiative. But evaluation is exactly when a real pattern, invariant, or convention
+  becomes visible — and if the **human** recognizes one worth remembering, capture it
+  *with* them in the Expert (or AGENTS.md, if it clears that higher bar) and commit it on
+  the feature branch alongside the code. It rides into `main` with the merge, where
+  `/learn` (its **P7**) treats human-authored memory edits in the merged diff as **ground
+  truth to extend, not a proposal to second-guess** — the same path a human's STUCK
+  correction takes. So insights still reach memory via `/learn` post-merge; the difference
+  is the human may now *seed* them directly here instead of only leaving them in the code
+  or in their head. (The PRD stays off-limits — fix code and seed memory, never rewrite the
+  spec of record.)
 - **E8 — Run in the human's own checkout, detached.** Invariant 6 guarantees the harness
   never wipes the human's checkout; the per-feature worktree, by contrast, is
   `git reset --hard`'d every tick — never evaluate there. Check out the PR head
@@ -153,7 +162,9 @@ harness." You are the last mile.
   handoff comment. **Not** the dispatcher — this is a human-in-the-loop skill, like
   `/intent`.
 - **Outputs:** a **merged** PR, a **closed** PR, or **pushed commits** on `feature/<f>`
-  (optionally then merged). No sentinels, **no memory writes**, no `.harness` access.
+  (optionally then merged). Those commits may include human-authored memory edits
+  (Expert / AGENTS.md) that reach memory through the merge + `/learn` (E7). No sentinels,
+  no `.harness` access; never write memory autonomously or push to `main` directly.
 - **How the harness reacts** (the skill does not manage this — the dispatcher does):
   merge/close → the cleanup pass tears down the worktree + `human-review-<f>` sentinels
   (merge also triggers Flow 3 / `/learn`). A push while in HUMAN_REVIEW just updates the
@@ -166,7 +177,10 @@ that persists nothing. If you requested changes earlier and the harness has sinc
 re-converged (a new "Ready for your review" comment), just evaluate the new state.
 
 ## Hard nevers
-- **Never write memory** (Expert / AGENTS.md). Not merged = not ground truth (E7).
+- **Never write memory *autonomously*.** You don't edit the Expert / AGENTS.md on your own
+  initiative — but when the human recognizes a pattern worth keeping, capture it with them
+  and commit it on `feature/<f>`; it reaches memory as ground truth via the merge + `/learn`
+  P7 (E7).
 - **Never rehash the bot's mechanical findings.** Ingest, summarize, move on (E3).
 - **Never auto-merge or auto-close.** Both require the human's explicit go-ahead (E9).
 - **Never hand work back to the loop.** No `CHANGES_REQUESTED`, no reviewer ping — if a

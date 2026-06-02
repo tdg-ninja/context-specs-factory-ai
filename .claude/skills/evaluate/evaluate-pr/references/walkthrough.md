@@ -61,9 +61,19 @@ As you walk, you'll find things. Sort each into:
 - **Implementation gap** — the code doesn't satisfy the PRD. Fix it.
 - **PRD defect** — the intent itself missed something obvious-in-hindsight. The most
   valuable find: Evaluate just improved the *next* Intent. Here, fix the **code** for
-  this PR; don't rewrite `prd.md`.
+  this PR.
 
 When something should change, **you fix it here and push** — there is no handing work
 back to the loop. Make the edit with the human in the detached checkout, commit, and
 `git push origin HEAD:feature/<f>` (see `verdict.md`). Keep fixes scoped to what was
 discussed; this is the last mile, not a re-implementation.
+
+Separately, the walk may surface not a change to *make* but a pattern to *remember* — a
+convention this PR establishes, an invariant it upholds, an abstraction worth naming for
+the next feature (the **core-abstractions** lens is where these usually appear). If the
+**human** judges it worth keeping, capture it in the Expert (or AGENTS.md, if it clears
+that higher bar) and commit it on the branch with the code. It rides into `main` with the
+merge, where `/learn` honors human-authored memory edits as ground truth — its P7
+*extends* them rather than re-litigating them. This is the one thing `/evaluate-pr` writes
+to memory, and only when the human, not you, recognizes the pattern. The PRD is never
+touched here — fix code and seed memory, but leave the spec of record alone.
