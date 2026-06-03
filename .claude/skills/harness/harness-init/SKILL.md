@@ -203,7 +203,7 @@ the tradeoffs and that switching later is cheap (one workflow file). Then:
 **Convergence marker (both reviewer paths).** `REVIEW.md` instructs the reviewer to
 post a PR comment containing `HARNESS_REVIEW_CLEAN` once it has no Important findings
 left. That marker is how the dispatcher knows the review loop converged and hands the
-PR to the human for `/evaluate-pr` (Flow 2.7) — it's a single deterministic signal,
+PR to the human for `/evaluate-pr` — it's a single deterministic signal,
 the same for managed and self-hosted. The token is configurable via
 `REVIEW_CLEAN_MARKER` in `.harness/env` (must match what `REVIEW.md` tells the
 reviewer to post). If the reviewer never posts it, the feedback loop reaches
@@ -211,8 +211,8 @@ reviewer to post). If the reviewer never posts it, the feedback loop reaches
 
 ### Step 8 — Host worktree + provision
 
-Explain the three-checkout model (see `references/mental-model.md` and the
-project's `SETUP.md` if present): the human's checkout stays on `main`; the
+Explain the three-checkout model (see `references/mental-model.md`): the
+human's checkout stays on `main`; the
 harness **host** worktree is a sibling that stays **detached at `origin/main`**
 (re-synced every tick by `harness-tick.sh`); per-feature work happens in
 *ephemeral* `../<repo>-harness-<feature>` worktrees the dispatcher creates and

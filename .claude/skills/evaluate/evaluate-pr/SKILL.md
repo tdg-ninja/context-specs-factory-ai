@@ -141,8 +141,8 @@ but it must be an explicit opt-out, not a default skip (E6).
 
 ### Step 7 — Verdict
 Per `references/verdict.md`, exactly one of:
-- **Merge.** On the user's explicit go-ahead, merge the PR (E9). The merge triggers Flow 3
-  (`/learn`) and the dispatcher's cleanup.
+- **Merge.** On the user's explicit go-ahead, merge the PR (E9). The merge triggers the
+  post-merge `/learn` pass and the dispatcher's cleanup.
 - **Fix, then merge.** If the walk surfaced things to change, make the edits in the
   detached checkout *with* the human, commit, and push (`git push origin HEAD:feature/<f>`).
   The reviewer re-runs on the push; once it's clean again you merge. Keep edits scoped;
@@ -167,7 +167,7 @@ harness." You are the last mile.
   no `.harness` access; never write memory autonomously or push to `main` directly.
 - **How the harness reacts** (the skill does not manage this — the dispatcher does):
   merge/close → the cleanup pass tears down the worktree + `human-review-<f>` sentinels
-  (merge also triggers Flow 3 / `/learn`). A push while in HUMAN_REVIEW just updates the
+  (merge also triggers the post-merge `/learn` pass). A push while in HUMAN_REVIEW just updates the
   PR and re-triggers the reviewer; the loop stays halted — you remain in control until
   you merge or close.
 

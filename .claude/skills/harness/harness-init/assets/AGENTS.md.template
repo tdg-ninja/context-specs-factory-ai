@@ -3,14 +3,13 @@
 <!-- AGENTS.md — the agent contract. Vendor-neutral, eagerly loaded at the start
      of every session that touches this repo. This is a MAP, not an encyclopedia:
      it points into the Expert and the code. Keep it under ~150 lines — everything
-     here is paid in tokens on every invocation. Setup mechanics live in SETUP.md. -->
+     here is paid in tokens on every invocation. -->
 
 ## Onboarding (read before doing anything non-trivial)
 
 1. `.claude/skills/expert/SKILL.md` — this project's Expert. Long-term memory; consult it.
 2. `prds/<f>/prd.md` — why a feature exists. `prds/<f>/run-prd-test.sh` — its runnable definition of done.
 3. `specs/<f>/mainspec.md` (+ `slices/`) — the plan for a feature.
-4. `designInvariants.md` — canonical invariants; tiebreaker when prose and behavior disagree.
 
 ## The Expert (consult before non-trivial work)
 

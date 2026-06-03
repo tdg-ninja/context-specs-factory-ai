@@ -19,8 +19,8 @@ Everything in `AGENTS.md` is paid for in tokens on *every* invocation, because i
 eager. The Expert is the opposite — pulled on demand — so dense knowledge belongs
 there, with AGENTS.md pointing to it. Cap the root file at ~150 lines (the freshness
 lint `check-agents-md.sh` enforces this). Setup mechanics, multi-developer
-coordination, and hackable seams belong in `SETUP.md`. If you're tempted to explain
-*how to set up* the harness in `AGENTS.md`, stop — that's `SETUP.md`'s job.
+coordination, and hackable seams don't belong in `AGENTS.md` at all. If you're
+tempted to explain *how to set up* the harness in `AGENTS.md`, stop —
 `AGENTS.md` tells an agent how to *operate* in this repo, not how it was built.
 
 ## What to fill from the scan
@@ -33,7 +33,7 @@ coordination, and hackable seams belong in `SETUP.md`. If you're tempted to expl
 
 ## What stays verbatim (do not editorialize)
 
-- The **Onboarding** list (Expert, PRDs, specs, designInvariants).
+- The **Onboarding** list (Expert, PRDs, specs).
 - The **Expert** section — its role as long-term memory, the "consult before
   non-trivial work" rule, "reflects what's committed to main."
 - The **skill chain** table — the state machine. Canonical; do not reorder or
@@ -57,13 +57,6 @@ The root file is usually all a project needs at setup. Nested AGENTS.md files (i
 subfolders) are added *later, by `/learn`*, only when a merge introduces a
 folder-local rule that clears the high bar — they're not part of initial setup.
 Mention this so the user knows the memory will grow itself over time.
-
-## designInvariants.md
-
-The template's onboarding list points at `designInvariants.md`. If the consumer
-project doesn't have it yet, offer to copy the canonical one in. If the user
-declines, drop that line from the onboarding list rather than leaving a dangling
-reference (the freshness lint would flag it).
 
 ## Present it as a diff
 

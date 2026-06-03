@@ -52,7 +52,7 @@ gh pr merge <pr> --merge   # or the project's policy (squash/rebase)
 ```
 
 The merge triggers the dispatcher's cleanup (tears down the per-feature worktree and the
-`human-review-<f>` sentinels) and Flow 3 (`/learn` reconciles memory from the merged diff).
+`human-review-<f>` sentinels) and the post-merge `/learn` pass (which reconciles memory from the merged diff).
 This is where insights from your evaluation get recorded — whether they landed as **code**,
 or as **memory edits the human wrote during the walk** (Expert / AGENTS.md, committed on the
 branch). `/learn`'s P7 treats those human-authored edits as ground truth to *extend*, not

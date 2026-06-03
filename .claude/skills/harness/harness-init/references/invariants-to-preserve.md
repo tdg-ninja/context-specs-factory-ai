@@ -1,9 +1,8 @@
 # Invariants the setup must not break
 
-The harness rests on nine invariants (full text in the consumer project's
-`designInvariants.md`, or the design repo). harness-init must not generate
-anything that violates them. This is the short list with the setup-time
-implication of each — what *you*, running this skill, must be careful about.
+The harness rests on nine invariants (listed below, each with its setup-time
+implication). harness-init must not generate anything that violates them — this
+is what *you*, running this skill, must be careful about.
 
 | # | Invariant | What it means at setup time |
 |---|-----------|------------------------------|

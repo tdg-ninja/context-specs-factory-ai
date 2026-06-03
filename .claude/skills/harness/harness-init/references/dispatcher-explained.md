@@ -44,7 +44,7 @@ Explain these as the "why it's safe" of the script. Each maps to an invariant.
    session trail once and halts the feature for the human's `/evaluate-pr`. The
    marker (not sticky review state) is the signal, so a clean PR can't false-STUCK
    on a stale `COMMENTED` review. If the reviewer never marks clean, the feedback
-   cap STUCKs instead — fine, the human merges. (Flow 2.7)
+   cap STUCKs instead — fine, the human merges.
 
 ## Section-by-section map
 

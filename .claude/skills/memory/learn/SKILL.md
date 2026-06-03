@@ -25,7 +25,7 @@ output is a single reviewable PR — never an auto-merge. Humans steer at merge.
 There is **one memory write path** in this design: you, on merge, via a
 human-merged PR. STUCK features are handled by the human directly (their first
 job there is to identify the context defect that misled the agent, correct it on
-the feature branch, then fix the code — see SETUP.md); their corrections ride
+the feature branch, then fix the code); their corrections ride
 into main with the feature merge, and **you observe them in the diff you read**.
 
 ## The philosophy

@@ -1,4 +1,4 @@
-# Self-hosted PR reviewer for the harness (Flow 2.5).
+# Self-hosted PR reviewer for the harness.
 # Auto-reviews the PR on open and on every push, governed by REVIEW.md at repo
 # root. NON-CONVERSATIONAL by design: the implementer acts on findings by pushing
 # commits, not by replying to threads. This is the harness's one-way reviewer.

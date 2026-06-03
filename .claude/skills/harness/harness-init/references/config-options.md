@@ -53,7 +53,7 @@ halts that feature.
 All env-overridable in `.harness/env`. Raise for hard features; lower to fail
 faster.
 
-### `REVIEW_CLEAN_MARKER` (convergence signal, Flow 2.7)
+### `REVIEW_CLEAN_MARKER` (convergence signal)
 
 Default `HARNESS_REVIEW_CLEAN`. When the reviewer has no Important findings left,
 `REVIEW.md` instructs it to post a PR comment containing this token; the dispatcher
@@ -102,7 +102,7 @@ Holds runtime state, all re-derivable, none of it secret:
 - `human-review-<f>` (sentinel — reviewer converged, PR handed to the human),
   `human-review-posted-<f>` (marks the trail comment already posted, so it posts
   once), `human-review-body-<f>.md` (the "Ready for your review" comment) — written
-  at convergence (Flow 2.7); cleared on merge/close.
+  at convergence; cleared on merge/close.
 - `sessions-<f>.tsv` — every `claude -p` invocation for this feature, one row each
   (timestamp, step, attempt, session_id, exit, duration). The STUCK PR body
   quotes the tail of this file so the human can open the trace by session_id.

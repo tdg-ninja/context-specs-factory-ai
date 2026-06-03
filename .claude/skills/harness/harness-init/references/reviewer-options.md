@@ -1,4 +1,4 @@
-# Reviewer options (Flow 2.5)
+# Reviewer options
 
 The PR review cycle is OPTIONAL but real. When set up, an automated reviewer
 flags issues on the feature PR and `/address-feedback` responds, with a
@@ -85,7 +85,7 @@ stock `examples/claude.yml`. It's a separate `.github/workflows/` file on
 different triggers (`issue_comment`, etc.); the two coexist with no oscillation.
 
 We deliberately do **not** bundle it, so the harness's automated reviewer stays
-one-way (Flow 2.5). If a user wants the interactive assistant too, point them at
+one-way. If a user wants the interactive assistant too, point them at
 the stock `claude.yml` as a one-file add — orthogonal to the harness. (Managed
 Code Review, option B, includes `@claude` mentions natively.)
 
