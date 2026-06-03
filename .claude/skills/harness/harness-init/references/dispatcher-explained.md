@@ -53,7 +53,7 @@ Explain these as the "why it's safe" of the script. Each maps to an invariant.
 | top | `flock -n` self-lock | No — serializes ticks; load-bearing. |
 | config block | `SLUG`, `WATCH`, `WORKTREE_BASE`, `MAX_WORKTREES` | Via `.harness/env`, not by editing here. `WORKTREE_BASE` derives `<repo>` from the **main worktree**, not `$PWD` — so per-feature paths are `<repo>-harness-<feature>` even though the dispatcher runs from the `<repo>-harness` host worktree. |
 | `has_prd()` | Invariant-2 ownership filter | No — defines what "harness-owned" means. |
-| step 1 | re-attach in-flight worktrees | The `bootstrap_worktree` hook call is the local addition (see below). |
+| step 1 | re-attach in-flight worktrees | The `bootstrap_worktree` hook call is the local addition (see below). The PR-state **liveness gate** (skip `MERGED`/`CLOSED` features) is load-bearing — don't drop it; see "Liveness" below. |
 | step 2 | lazy claim up to capacity | No — atomic rename is the claim lock. |
 | step 3 | advance each feature one step | **This is where you add/remove pipeline steps** — one `elif` per step. |
 | step 4 | cleanup merged/closed PRs | Safe to extend (e.g., notify on cleanup). |
@@ -74,6 +74,34 @@ script, the hook is a no-op.
 
 Make sure the user knows: this hook is why the per-feature worktrees the harness
 spins up are actually runnable.
+
+## Liveness — branch existence is not in-flight (the step-1 PR-state gate)
+
+`has_prd()` answers *ownership* ("is this a harness feature?"), not *liveness*
+("is there still work to do?"). A `feature/<f>` whose PR has **merged** keeps both
+its branch (GitHub's delete-on-merge is off by default, and you can't make every
+consumer enable it) and its committed PRD — so `has_prd()` stays true forever.
+Without a liveness check, step 1 re-attaches that finished feature as in-flight on
+*every* tick, which does two bad things at once:
+
+1. step 3 re-fires `/address-feedback` on the merged PR — wasted tokens, every tick;
+2. the phantom occupies a `MAX_WORKTREES` slot, so `capacity` (step 2) drops and a
+   freshly-filed PRD sits unclaimed in the queue behind a feature that's already done.
+
+Step 4 cleanup notices the merge and removes the *local* worktree, but it runs
+*after* step 3 and doesn't delete the *remote* branch — so the next tick's step 1
+re-attaches the same ghost. The fix is one gate in step 1, right after `has_prd`:
+`gh pr view` the feature's PR and `continue` past any `MERGED`/`CLOSED` one. Because
+the in-flight set is what feeds the capacity math, that single skip cures both
+symptoms. Notes:
+
+- **No branch deletion.** We never `git push --delete` a merged feature branch —
+  the harness simply stops treating it as live work. Consumers keep whatever
+  branch-retention policy they like.
+- **Fail-safe on empty state.** A feature still in a pre-PR phase
+  (planning/validate/implement) has no PR, and a transient `gh` outage also returns
+  empty — both are kept in-flight so live work is never silently dropped.
+- **Forward-only (Inv 9).** Merged is terminal; the gate only ever skips, never rewinds.
 
 ## The tick wrapper — keeping the host worktree current (`harness-tick.sh`)
 

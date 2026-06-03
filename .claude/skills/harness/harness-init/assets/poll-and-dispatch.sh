@@ -246,6 +246,17 @@ for feature in $(git for-each-ref --sort=committerdate \
                    --format='%(refname:lstrip=4)' \
                    refs/remotes/origin/feature/ 2>/dev/null || true); do
   has_prd "$feature" || continue
+  # Liveness gate: a MERGED/CLOSED PR means this feature is DONE. Its branch may
+  # still linger on origin (we never force-delete it — a merged feature/* often
+  # outlives its PR), but a done feature is NOT in-flight. Skipping it here is
+  # load-bearing twice over: it stops step 3 from re-spawning a pointless
+  # /address-feedback on a merged PR, AND it frees the MAX_WORKTREES slot the
+  # phantom was holding so step 2 can claim a waiting PRD. Step 4 still tears down
+  # the local worktree. Empty state — no PR opened yet (pre-PR pipeline phase) or a
+  # transient gh failure — is fail-SAFE: treat as in-flight and keep advancing,
+  # never silently abandon live work. Merged is terminal, so this never rewinds. (Inv 9)
+  pr_state="$(gh pr view "feature/${feature}" --json state --jq .state 2>/dev/null || echo "")"
+  [[ "$pr_state" == "MERGED" || "$pr_state" == "CLOSED" ]] && continue
   wt="$(worktree_for "$feature")"
   if [[ ! -d "$wt" ]]; then
     git worktree add "$wt" "feature/${feature}" 2>/dev/null && bootstrap_worktree "$wt" || true
