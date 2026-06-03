@@ -46,8 +46,6 @@ Include, in roughly fastest-to-slowest order:
 - **Skip-detection** — block. See "The skip rule" below.
 - **Everything in `scripts/lints/`** — the directory `/learn` grows custom invariant
   lints into over time. Have the script run them all.
-- **`check-agents-md.sh`** — the memory-freshness lint shipped with `/learn`, so a
-  stale AGENTS.md pointer fails the build.
 
 **Mutation testing does NOT belong here.** It's the only true "are the tests
 discriminating?" proof, but it's far too slow for this hot-path gate. If the project

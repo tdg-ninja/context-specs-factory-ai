@@ -138,8 +138,7 @@ It has two responsibilities (the reference details both):
 
 - **Wire the project's deterministic checks** — lint/format (with a `fix`
   subcommand), typecheck, the **fast** unit suite (slow/integration → CI), a
-  **skip-detection** check, everything in `scripts/lints/`, and the AGENTS.md
-  freshness lint (`check-agents-md.sh`, shipped with `/learn`). Prefer commands the
+  **skip-detection** check, and everything in `scripts/lints/`. Prefer commands the
   project already defines; call existing pre-commit hooks rather than duplicating.
 - **Propose custom correctness lints** from the codebase as-is (snapshot discovery)
   — observed existing invariants + surface-scoped best-practice lints, behind the
