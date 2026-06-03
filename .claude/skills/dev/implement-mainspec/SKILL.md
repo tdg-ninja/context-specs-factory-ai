@@ -241,6 +241,8 @@ Tier 0 slices are committed directly to `feature/<feature>` — no PRs. This is 
 
 **Critical:** Do NOT use `isolation: "worktree"` from the Agent tool — it branches from the remote default branch and won't have Tier 0 code.
 
+**Preflight — bootstrap availability.** Before creating any worktrees, check for `scripts/bootstrap-worktree.sh`. If it is **not** an executable file, emit a loud warning to stdout — e.g. `WARN: no executable scripts/bootstrap-worktree.sh found; slice worktrees will lack deps/.env/codegen, so signals and unit tests may fail. Continuing anyway.` — then proceed. Do **not** halt: a missing bootstrap script is a warning, not a precondition. When the script IS present, each worktree is bootstrapped right after creation (see below).
+
 ### Creating Worktrees
 
 For each REMAINING slice in the current tier (skip slices whose PR is already merged):
@@ -262,6 +264,15 @@ fi
 
 # Record the absolute worktree path for the subagent prompt
 abs_worktree_path="$(realpath ${worktree_path})"
+
+# Make the fresh worktree runnable: a bare worktree has no gitignored files
+# (node_modules, .env, generated code), so slice signals and unit tests would fail
+# for reasons unrelated to the feature. Mirrors the dispatcher's bootstrap hook.
+# Idempotent + non-interactive; a failure here is logged but does not stop the slice.
+if [[ -x scripts/bootstrap-worktree.sh ]]; then
+  ./scripts/bootstrap-worktree.sh "${abs_worktree_path}" || \
+    echo "WARN: bootstrap-worktree.sh failed for ${abs_worktree_path} — signals/tests may fail" >&2
+fi
 ```
 
 ### Cleaning Up Worktrees
@@ -515,6 +526,7 @@ Detailed reference material for parallel mode execution:
 ### Parallel Mode Only
 
 **DO:**
+- Bootstrap every slice worktree via `scripts/bootstrap-worktree.sh` right after `git worktree add`; if the script is absent, warn and continue (do not fail the run).
 - Spawn all subagents for a tier in a single message.
 - Auto-merge slice PRs with `gh pr merge --merge` (preserving slice commits + a merge commit). Never `--squash`. Never `--delete-branch` — slice branches stay on origin as evidence.
 - Clean up worktrees after each tier's PRs are merged.
