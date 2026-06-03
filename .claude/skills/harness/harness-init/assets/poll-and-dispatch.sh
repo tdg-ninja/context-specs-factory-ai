@@ -231,9 +231,14 @@ signal_stuck() {
 reviewer_converged() {
   local branch="$1"
   [[ -n "$REVIEW_CLEAN_MARKER" ]] || return 1
-  gh pr view "$branch" --json comments \
-    --jq --arg m "$REVIEW_CLEAN_MARKER" '[.comments[]?|select(.body|contains($m))]|length>0' \
-    2>/dev/null | grep -q true
+  # NB: gh's --jq is a lightweight filter, NOT full jq — it has no --arg. The
+  # prior `--jq --arg m "$MARKER" '<expr>'` form made gh treat --arg/m/marker/expr
+  # as stray positional args ("accepts at most 1 arg(s)"), so it errored, 2>/dev/null
+  # hid it, and this ALWAYS returned false — the HUMAN_REVIEW handoff never fired and
+  # every PR ground to FEEDBACK_CAP and false-STUCK. Pull the comment bodies and
+  # fixed-string match the marker in the shell instead.
+  gh pr view "$branch" --json comments --jq '.comments[]?.body' 2>/dev/null \
+    | grep -qF "$REVIEW_CLEAN_MARKER"
 }
 
 git fetch --quiet origin
