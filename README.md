@@ -176,35 +176,58 @@ next one.
 
 ## Getting started
 
-**Set it up.** [Install the skills](#installation), then create your project's
-custom harness with
-[`/harness-init`](./skills/harness/harness-init/SKILL.md) and start it
-with `/loop 5m /poll-and-dispatch`. *(Optionally run
-[`/wiki-init`](./skills/human-loop/wiki-init/SKILL.md) first to build your
-own understanding of the problem space.)*
+**Set it up once.** [Install the skills](#installation), then run
+[`/harness-init`](./skills/harness/harness-init/SKILL.md) — a guided setup that
+builds your project's custom harness and provisions its worktrees. It runs as
+**two independent loops, each in its own long-lived session.** Start them:
 
-Your harness loop is now running. Here's how you feed it:
+```bash
+# session 1 — the build loop (features)
+/loop 5m /poll-and-dispatch
+
+# session 2 — the memory loop (/learn), in a SEPARATE session
+/loop 10m /learn-loop
+```
+
+*(Optionally run [`/wiki-init`](./skills/human-loop/wiki-init/SKILL.md) first to
+build your own understanding of the problem space before you write intent.)*
+
+With both loops running, you live in a three-beat cycle: you express intent, the
+harness builds, and you evaluate what comes back.
 
 ```mermaid
 flowchart LR
-  Intent["/intent\nyou express intent"] --> Build["the harness builds\nthe PR"]
-  Build --> Eval["/evaluate-pr · /evaluate-sessions\nyou judge it"]
-  Eval --> Merge["merge → /learn\nimproves the context"]
-  Merge --> Intent
+  Intent["/intent\nyou express intent"] --> Build["build loop\nplans → builds the PR"]
+  Build --> Eval["/evaluate-pr · /evaluate-sessions\nyou understand it"]
+  Eval --> Merge["merge"]
+  Merge --> Learn["learn loop\nupdates memory → PR"]
+  Learn --> Intent
 ```
 
-1. **You start it.** `/intent` a feature — a PRD plus a runnable definition of
-   done.
-2. **The harness builds.** It plans, validates, implements, verifies, and opens a
-   PR - all autonomously.
-3. **You close the loop.** Review the change with `/evaluate-pr`, then merge.
-   When something comes out wrong, fix the context *first*: the code is wrong
-   because the harness was working from bad context, and `/evaluate-sessions` traces
-   it back so you can correct it — *then* fix the code. The code fix repairs this
-   one feature; the context fix, picked up by `/learn` on merge, keeps the same
-   mistake out of every feature after.
+**1 · You express intent (human loop, before).** `/intent` a feature — a PRD plus
+a runnable definition of done. That PRD is the harness's input.
 
-Your intent is the harness's input; its PR is your evaluation's input; evaluating
+**2 · The harness builds (two loops).**
+- **The build loop** (`/loop 5m /poll-and-dispatch`) picks up your intent and runs
+  the SDD chain — plan, validate, implement, verify — all the way to an open PR.
+- **The memory loop** (`/loop 10m /learn-loop`) watches `main`. Every merge is a
+  chance to add memory, or remove a memory a change has made stale. It raises a
+  *separate* PR for those memory updates, so long-term learning never blocks the
+  build loop. The two coordinate only through git.
+
+**3 · You evaluate (human loop, after).**
+- **`/evaluate-pr`** — the goal here is *understanding* the change, not reaching a
+  verdict. Approving, requesting changes, or closing are byproducts of that
+  understanding; the understanding itself is what lets you write sharper intent
+  next time.
+- **`/evaluate-sessions`** — for when the outcome was off, whether the harness got
+  **STUCK** or the PR was wrong on review. This is usually a context issue: with
+  the right context, the agent could have done the task. Evaluate-sessions reads every session
+  that led to the PR — intent, spec-planning, spec-validate, implementation — to
+  locate the **context gap**. Fixing the context matters more than fixing
+  the code: the code fix repairs this one feature, while the context fix keeps the same mistake out of every future feature.
+
+Your intent is the harness's input; the harness's PR is your evaluation's input; evaluating
 improves the context that feeds the next round. That's the cycle you live in.
 
 *(Only want the spec workflow? Layer 1 stands on its own — drive `/spec-planning`
