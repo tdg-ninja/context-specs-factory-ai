@@ -79,7 +79,7 @@ That's the whole bet of Context Specs, stated plainly:
 ---
 
 That's the story. To go deeper on any layer, the chapters point into the actual
-skills under [`.claude/skills/`](../.claude/skills/); to understand *why* the
+skills under [`skills/`](../skills/); to understand *why* the
 harness is safe to leave running, read the **[design invariants](./invariants.md)**.
 
 ← [Back to the start](./README.md)

@@ -66,6 +66,6 @@ as you climb — but you can stop on any rung.
 ## Where the code lives
 
 Everything described here ships as Agent Skills under
-[`.claude/skills/`](../.claude/skills/). The chapters point at the specific
+[`skills/`](../skills/). The chapters point at the specific
 skill, script, or reference file that implements each idea, so you can read the
 story and then go read the source.

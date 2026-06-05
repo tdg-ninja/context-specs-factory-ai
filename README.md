@@ -42,19 +42,19 @@ whole project that builds itself, then the way you work day to day.
 ![Experts](./experts.png)
 
 You create **domain experts** from your own documentation with
-[`/expert-sdd-creator`](./.claude/skills/specs/expert-sdd-creator/SKILL.md) —
+[`/expert-sdd-creator`](./skills/sdd/expert-sdd-creator/SKILL.md) —
 define the knowledge once, and it flows automatically through every phase:
 
-1. **Spec Planning** ([`/spec-planning`](./.claude/skills/specs/spec-planning/SKILL.md)) —
+1. **Spec Planning** ([`/spec-planning`](./skills/sdd/spec-planning/SKILL.md)) —
    research the codebase, pull in matching experts, and write the plan to disk as
    a **mainspec** plus temporally-ordered **slices**. Planning lives *outside* the
    context window, so it can't decay or compact away; slicing feeds the
    implementer only the piece it's working on.
-2. **Spec Validation** ([`/spec-validate`](./.claude/skills/specs/spec-validate/SKILL.md)) —
+2. **Spec Validation** ([`/spec-validate`](./skills/sdd/spec-validate/SKILL.md)) —
    3+ independent Opus reviewers plus expert review, with consensus scoring
    (3/3 = very high, 2/3 = high) turning agreement into a confidence signal.
    Impactful findings are applied in place.
-3. **Implementation** ([`/implement-mainspec`](./.claude/skills/dev/implement-mainspec/SKILL.md)) —
+3. **Implementation** ([`/implement-mainspec`](./skills/sdd/implement-mainspec/SKILL.md)) —
    slices implemented in dependency order, sequential or auto-parallelized across
    git worktrees, each gated by **Signal** (the runtime feedback loop, below).
 
@@ -80,7 +80,7 @@ default; experts can define richer ones.
 
 The whole promise, in one sequence:
 
-> Describe a feature to [`/intent`](./.claude/skills/intent/SKILL.md) and confirm
+> Describe a feature to [`/intent`](./skills/human-loop/intent/SKILL.md) and confirm
 > it. Walk away. The project plans the feature, validates the plan, implements
 > it, runs its checks, opens a pull request, answers the reviewer — and hands you
 > back a PR that's ready to merge.
@@ -108,14 +108,14 @@ step genuinely can't make progress, the harness stops and hands you a
 **diagnosis-first** report rather than faking success.
 
 **It also remembers.** When code lands on `main`, the harness updates its own
-long-term memory: [`/learn`](./.claude/skills/memory/learn/SKILL.md) reads the
+long-term memory: [`/learn`](./skills/harness/learn/SKILL.md) reads the
 merged diff and routes what's worth keeping into the Expert, the `AGENTS.md` map,
 or a custom lint the agent can't ship past — so the next feature starts knowing
 what the last one taught. One write path, ground truth only, behind a human
 merge.
 
 Setting all this up is itself a guided skill:
-[`/harness-init`](./.claude/skills/harness/harness-init/SKILL.md).
+[`/harness-init`](./skills/harness/harness-init/SKILL.md).
 
 → [Chapter 3 — The agent harness](./docs/3-the-agent-harness.md) ·
 [Chapter 4 — Continuous improvement](./docs/4-continuous-improvement.md)
@@ -138,13 +138,13 @@ Understanding ──▶ Intent ──▶ [ the harness builds ] ──▶ Evalua
                                                         /evaluate-sessions
 ```
 
-- **Understanding** ([`/wiki-init`](./.claude/skills/understand/wiki-init/SKILL.md)) —
+- **Understanding** ([`/wiki-init`](./skills/human-loop/wiki-init/SKILL.md)) —
   a Karpathy "LLM Wiki" that builds *your* model of the problem space, so you
   arrive at Intent with sharper questions.
-- **Intent** ([`/intent`](./.claude/skills/intent/SKILL.md)) — turn that
+- **Intent** ([`/intent`](./skills/human-loop/intent/SKILL.md)) — turn that
   understanding into a PRD plus a runnable definition of done.
-- **Evaluate** ([`/evaluate-pr`](./.claude/skills/evaluate/evaluate-pr/SKILL.md) +
-  [`/evaluate-sessions`](./.claude/skills/evaluate/evaluate-sessions/SKILL.md)) —
+- **Evaluate** ([`/evaluate-pr`](./skills/human-loop/evaluate-pr/SKILL.md) +
+  [`/evaluate-sessions`](./skills/human-loop/evaluate-sessions/SKILL.md)) —
   walk the change to build real understanding, *and* read the build trail to find
   where the project's context served the agents or failed them. The flywheel:
   *observe a trace → capture it as an eval → fix the context → it persists as a
@@ -178,9 +178,9 @@ next one.
 
 **Set it up.** [Install the skills](#installation), then create your project's
 custom harness with
-[`/harness-init`](./.claude/skills/harness/harness-init/SKILL.md) and start it
+[`/harness-init`](./skills/harness/harness-init/SKILL.md) and start it
 with `/loop 5m /poll-and-dispatch`. *(Optionally run
-[`/wiki-init`](./.claude/skills/understand/wiki-init/SKILL.md) first to build your
+[`/wiki-init`](./skills/human-loop/wiki-init/SKILL.md) first to build your
 own understanding of the problem space.)*
 
 Your harness loop is now running. Here's how you feed it:
@@ -245,11 +245,11 @@ Run from your target project directory. Copies agent definitions (e.g.
 | | `/spec-validate` | Multi-agent consensus + expert review |
 | | `/implement-slice`, `/implement-mainspec` | Implement with Signal feedback, sequential or parallel |
 | **2 · Harness** | `/harness-init` | Guided setup of the local harness |
-| | `/intent` | Idea → PRD + runnable definition of done |
 | | `/fix-local-checks` | Honest fixes for a failing pre-PR gate |
 | | `/address-feedback` | Triage and answer reviewer findings |
 | | `/learn` | Post-merge long-term memory update |
 | **3 · Human loop** | `/wiki-init` | Stand up a Karpathy LLM-wiki (Understanding) |
+| | `/intent` | Idea → PRD + runnable definition of done |
 | | `/evaluate-pr` | Evaluate the change; build understanding |
 | | `/evaluate-sessions` | Evaluate the build trail; capture evals |
 
